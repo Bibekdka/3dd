@@ -1,0 +1,13 @@
+# Add project dependencies here
+streamlit>=1.28
+requests
+beautifulsoup4
+pandas
+trimesh
+numpy
+Pillow
+scikit-learn
+google-generativeai
+python-dotenv
+reportlab
+playwright
