@@ -1,4 +1,5 @@
 import time
+import subprocess
 try:
     from playwright.sync_api import sync_playwright
     PLAYWRIGHT_AVAILABLE = True
@@ -42,7 +43,17 @@ def scrape_model_page(url, debug=False):
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            # Attempt to launch browser, install if missing
+            try:
+                browser = p.chromium.launch(headless=True)
+            except Exception as e:
+                if "Executable doesn't exist" in str(e):
+                    logs.append("Installing Playwright browsers...")
+                    subprocess.run(["playwright", "install", "chromium"])
+                    browser = p.chromium.launch(headless=True)
+                else:
+                    raise e
+                    
             context = browser.new_context(
                 user_agent="Mozilla/5.0 Chrome/120 Safari/537.36"
             )
