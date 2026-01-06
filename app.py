@@ -3,6 +3,7 @@ import trimesh
 import os
 import tempfile
 import pandas as pd
+import json
 from dotenv import load_dotenv
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -517,6 +518,66 @@ def main():
                 # ✅ SAFE — these keys ALWAYS exist after refactor
                 st.markdown(f"**Summary:** {ai_result['summary']}")
                 st.markdown(ai_result["details"])
+                
+                # Save Scraped Data Section
+                st.divider()
+                st.subheader("💾 Save Scraped Data")
+                
+                # Prepare data for download
+                save_data = {
+                    "url": model_url,
+                    "scraped_text": clean_scraped_text(scraped_data['text']),
+                    "stl_links": scraped_data.get('stl_links', []),
+                    "image_urls": scraped_data.get('images', []),
+                    "ai_analysis": {
+                        "summary": ai_result['summary'],
+                        "details": ai_result['details']
+                    },
+                    "timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                
+                # Convert to JSON
+                json_str = json.dumps(save_data, indent=2, ensure_ascii=False)
+                
+                col_save1, col_save2 = st.columns(2)
+                
+                with col_save1:
+                    st.download_button(
+                        label="📥 Download Scraped Data (JSON)",
+                        data=json_str,
+                        file_name=f"scraped_data_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json",
+                        help="Download all scraped content, settings, and AI analysis"
+                    )
+                
+                with col_save2:
+                    # Create a simple text report
+                    text_report = f"""3D Model Scraping Report
+{'='*50}
+URL: {model_url}
+Timestamp: {save_data['timestamp']}
+
+AI SUMMARY:
+{ai_result['summary']}
+
+AI DETAILS:
+{ai_result['details']}
+
+STL LINKS:
+{chr(10).join(f"- {link}" for link in scraped_data.get('stl_links', [])) if scraped_data.get('stl_links') else "- No STL links found"}
+
+IMAGES FOUND: {len(scraped_data.get('images', []))}
+
+RAW TEXT:
+{save_data['scraped_text'][:1000]}...
+"""
+                    st.download_button(
+                        label="📄 Download Text Report",
+                        data=text_report,
+                        file_name=f"scraping_report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        mime="text/plain",
+                        help="Download a formatted text report"
+                    )
 
     with tab_history:
         st.header("📜 Analysis History")
