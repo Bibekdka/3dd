@@ -29,13 +29,14 @@ def clean_scraped_text(text):
     lines = text.splitlines()
     useful = [
         l for l in lines
-        if len(l) > 40
+        if len(l) > 30  # Slightly lower threshold to capture short but useful headers
         and not any(x in l.lower() for x in [
             "cookie", "privacy", "login", "sign up",
-            "terms", "©", "javascript"
+            "terms", "copyright", "javascript", "browser"
         ])
     ]
-    return "\n".join(useful[:200])
+    # Increase limit to capture more context (reviews, settings often at bottom)
+    return "\n".join(useful[:500])
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def scrape_model_page(url, debug=False):

@@ -168,7 +168,7 @@ def analyze_stl(file_path, density, cost_per_kg, infill, walls, speed_mm_s=60, n
             "Watertight": mesh.is_watertight
         }
     except Exception as e:
-        return None
+        return {"error": str(e)}
 
 def generate_quote(
     material_cost,
@@ -283,14 +283,18 @@ def main():
                         speed_mm_s=printer["max_speed_mm_s"],
                         nozzle_mm=printer["nozzle_mm"]
                     )
-                    if analysis:
+                    if analysis and "error" not in analysis:
                         analysis["File Name"] = stl.name
                         batch_results.append(analysis)
+                    elif analysis and "error" in analysis:
+                         st.error(f"Error processing {stl.name}: {analysis['error']}")
+                    else:
+                        st.error(f"Unknown error processing {stl.name}")
                     
                     # Cleanup
                     os.remove(tmp_path)
                 except Exception as e:
-                    st.error(f"Error processing {stl.name}: {e}")
+                    st.error(f"Critical error processing {stl.name}: {e}")
             
             status.update(label="Processing Complete!", state="complete", expanded=False)
 

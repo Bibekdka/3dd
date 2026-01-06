@@ -15,13 +15,17 @@ def ai_analyze(prompt_text):
         model = genai.GenerativeModel("gemini-1.0-pro")
         response = model.generate_content(prompt_text)
 
+        if not response.text:
+             raise ValueError("Empty response from AI")
+
         return {
             "mode": "live",
             "analysis": response.text
         }
 
     except Exception as e:
+        # Return a clean error message
         return {
             "mode": "error",
-            "analysis": str(e)
+            "analysis": f"AI Error: {str(e)}"
         }
