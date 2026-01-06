@@ -81,15 +81,11 @@ def display_ai_section(prompt_text, button_label="Generate AI Assessment"):
         with st.spinner("Consulting Gemini..."):
             ai_result = ai_analyze(prompt_text)
 
-        if ai_result["mode"] == "live":
-            st.subheader("🧠 AI-Extracted Best Print Settings")
-            st.markdown(ai_result["raw"])
-        else:
-            st.info("AI suggestions are based on general community patterns.")
-            st.markdown(ai_result["raw"])
-            if ai_result.get("best_settings"):
-                with st.expander("📋 View Settings Summary"):
-                    st.json(ai_result["best_settings"])
+        st.subheader("🧠 AI Recommendations")
+        
+        # ✅ SAFE — these keys ALWAYS exist after refactor
+        st.markdown(f"**Summary:** {ai_result['summary']}")
+        st.markdown(ai_result["details"])
 
 def slicer_volume_adjustment(
     mesh_volume_cm3,
@@ -502,15 +498,11 @@ def main():
                 with st.spinner("Analyzing content with Gemini..."):
                     ai_result = ai_analyze(prompt)
                     
-                if ai_result["mode"] == "live":
-                    st.subheader("🧠 AI-Extracted Best Print Settings")
-                    st.markdown(ai_result["raw"])
-                else:
-                    st.info("AI suggestions are based on general community patterns.")
-                    st.markdown(ai_result["raw"])
-                    if ai_result.get("best_settings"):
-                        with st.expander("📋 View Settings Summary"):
-                            st.json(ai_result["best_settings"])
+                st.subheader("🧠 AI-Extracted Best Print Settings")
+                
+                # ✅ SAFE — these keys ALWAYS exist after refactor
+                st.markdown(f"**Summary:** {ai_result['summary']}")
+                st.markdown(ai_result["details"])
 
     with tab_history:
         st.header("📜 Analysis History")
