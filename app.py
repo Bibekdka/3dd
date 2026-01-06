@@ -202,6 +202,9 @@ def generate_quote(
 def main():
     st.set_page_config(page_title="3D Slicer Volume Estimator", page_icon="🧊")
 
+    # Safe Mode for Streamlit Cloud (disables scraper)
+    SAFE_MODE = os.getenv("STREAMLIT_SAFE_MODE", "false").lower() == "true"
+
     st.title("🧊 3D Slicer Volume Estimator")
     
     # Sidebar for API Status
@@ -426,9 +429,20 @@ def main():
     st.header("🔗 Link Parser (Universal Scraper)")
     st.markdown("Supports MakerWorld, Printables, Thangs, Thingiverse, etc. Pasting a link scrapes images, settings, and reviews for AI analysis.")
     
+    if SAFE_MODE:
+        st.info(
+            "🔒 Safe Mode enabled (Streamlit Cloud).\n\n"
+            "• Web scraping disabled\n"
+            "• Upload STL manually for best results"
+        )
+    
     model_url = st.text_input("Paste 3D Model URL")
     
     if st.button("🚀 Scrape & Analyze", type="primary"):
+        if SAFE_MODE:
+            st.warning("Scraping is disabled in Safe Mode.")
+            st.stop()
+        
         if not model_url.strip():
             st.warning("Please enter a valid URL")
             st.stop()

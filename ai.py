@@ -16,84 +16,42 @@ if GEMINI_AVAILABLE and API_KEY:
         pass
 
 
-def _default_ai_output():
-    return {
-        "mode": "mock",
+def ai_analyze(text: str) -> dict:
+    """
+    SAFE AI wrapper.
+    NEVER crashes.
+    NEVER changes shape unexpectedly.
+    """
+
+    fallback = {
         "summary": "General community-based recommendations.",
-        "best_settings": {
-            "layer_height": "0.2 mm",
-            "infill": "15–20%",
-            "nozzle_temp": "200–210 °C",
-            "bed_temp": "55–60 °C",
-            "supports": "Only for overhangs > 45°",
-            "orientation": "Flat on bed"
-        },
-        "common_failures": [
-            "Warping on large flat surfaces",
-            "Stringing at high temperatures"
-        ]
+        "details": (
+            "- Layer height: 0.2 mm\n"
+            "- Infill: 15–20%\n"
+            "- Nozzle temp: 200–210 °C\n"
+            "- Bed temp: 55–60 °C\n"
+            "- Supports: Only if needed\n"
+            "- Orientation: Flat on bed\n"
+        )
     }
 
-
-def ai_analyze(scraped_text: str) -> dict:
-    """
-    ALWAYS returns:
-    - mode
-    - summary
-    - best_settings
-    - common_failures
-    """
-
-    # ---- SAFETY FIRST ----
-    if not scraped_text or len(scraped_text.strip()) < 100:
-        return _default_ai_output()
+    if not text or len(text.strip()) < 50:
+        return fallback
 
     if not GEMINI_AVAILABLE or not API_KEY:
-        return _default_ai_output()
-
-    prompt = f"""
-You are a 3D printing expert.
-
-From the text below, extract ONLY settings that users ACTUALLY used successfully.
-
-TEXT:
-{scraped_text}
-
-Respond EXACTLY in this format:
-
-SUMMARY:
-<short summary>
-
-BEST_SETTINGS:
-Layer Height:
-Infill:
-Nozzle Temp:
-Bed Temp:
-Supports:
-Orientation:
-
-COMMON_FAILURES:
-- bullet points
-"""
+        return fallback
 
     try:
         model = genai.GenerativeModel("gemini-1.0-pro")
-        response = model.generate_content(prompt)
+        response = model.generate_content(text)
 
         if not response or not response.text:
-            return _default_ai_output()
+            return fallback
 
-        text = response.text.strip()
-
-        # VERY simple parsing (safe)
         return {
-            "mode": "live",
-            "summary": "Extracted from user comments and description.",
-            "best_settings": {
-                "raw_text": text   # show as-is (no KeyError ever)
-            },
-            "common_failures": []
+            "summary": "Extracted from user comments and descriptions.",
+            "details": response.text.strip()
         }
 
     except Exception:
-        return _default_ai_output()
+        return fallback
