@@ -82,11 +82,13 @@ def display_ai_section(prompt_text, button_label="Generate AI Assessment"):
             ai_result = ai_analyze(prompt_text)
 
         if ai_result["mode"] == "live":
-            st.subheader("🧠 AI-Extracted Best Print Settings")
-            st.markdown(ai_result["raw"])
+            st.success("Gemini AI Analysis")
+            st.markdown(ai_result["analysis"])
+        elif ai_result["mode"] == "mock":
+            st.warning("Using mock AI output (Check API Key or Connection)")
+            st.write(ai_result["analysis"])
         else:
-            st.info("AI suggestions are based on general community patterns.")
-            st.json(ai_result["best_settings"])
+            st.error(f"AI Error: {ai_result.get('analysis', 'Unknown error')}")
 
 def slicer_volume_adjustment(
     mesh_volume_cm3,
@@ -500,11 +502,13 @@ def main():
                     ai_result = ai_analyze(prompt)
                     
                 if ai_result["mode"] == "live":
-                    st.subheader("🧠 AI-Extracted Best Print Settings")
-                    st.markdown(ai_result["raw"])
+                    st.markdown("### 🧠 AI Model Report")
+                    st.markdown(ai_result["analysis"])
+                elif ai_result["mode"] == "mock":
+                    st.warning("Using mock AI output")
+                    st.write(ai_result["analysis"])
                 else:
-                    st.info("AI suggestions are based on general community patterns.")
-                    st.json(ai_result["best_settings"])
+                    st.error(f"AI Error: {ai_result.get('analysis', 'Unknown error')}")
 
     with tab_history:
         st.header("📜 Analysis History")
