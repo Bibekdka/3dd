@@ -169,13 +169,15 @@ def generate_quote(
     print_time_hr,
     machine_rate_per_hr=50,   # ₹
     electricity_per_hr=10,    # ₹
+    labour_rate_per_hr=50,    # ₹
     profit_margin=0.30,       # 30%
     gst=0.0                   # Default 0% (Optional)
 ):
     base_cost = (
         material_cost +
         (print_time_hr * machine_rate_per_hr) +
-        (print_time_hr * electricity_per_hr)
+        (print_time_hr * electricity_per_hr) +
+        (print_time_hr * labour_rate_per_hr)
     )
 
     profit = base_cost * profit_margin
@@ -188,6 +190,7 @@ def generate_quote(
         "Material Cost (₹)": round(material_cost, 2),
         "Machine Cost (₹)": round(print_time_hr * machine_rate_per_hr, 2),
         "Electricity (₹)": round(print_time_hr * electricity_per_hr, 2),
+        "Labour Cost (₹)": round(print_time_hr * labour_rate_per_hr, 2),
         "Profit (₹)": round(profit, 2),
         "GST (₹)": round(gst_amount, 2),
         "Final Price (₹)": round(total, 2)
@@ -294,9 +297,11 @@ def main():
         c_quote1, c_quote2 = st.columns(2)
         with c_quote1:
             machine_rate = st.number_input("Machine Rate (₹ / hr)", value=50)
+            electricity_rate = st.slider("Electricity Rate (₹ / hr)", 0, 100, 10)
         with c_quote2:
             profit_pct = st.slider("Profit Margin (%)", 10, 100, 30)
             profit_margin = profit_pct / 100.0
+            labour_rate = st.slider("Labour Charge (₹ / hr)", 0, 500, 50)
             
         gst_pct = st.number_input("GST (%)", value=0, min_value=0, max_value=28, help="Enter 18 for standard GST")
         gst_rate = gst_pct / 100.0
@@ -305,6 +310,8 @@ def main():
             material_cost=total_cost * 83,  # USD to INR approx
             print_time_hr=total_time,
             machine_rate_per_hr=machine_rate,
+            electricity_per_hr=electricity_rate,
+            labour_rate_per_hr=labour_rate,
             profit_margin=profit_margin,
             gst=gst_rate
         )
