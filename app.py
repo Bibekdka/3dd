@@ -86,7 +86,10 @@ def display_ai_section(prompt_text, button_label="Generate AI Assessment"):
             st.markdown(ai_result["raw"])
         else:
             st.info("AI suggestions are based on general community patterns.")
-            st.json(ai_result["best_settings"])
+            st.markdown(ai_result["raw"])
+            if ai_result.get("best_settings"):
+                with st.expander("📋 View Settings Summary"):
+                    st.json(ai_result["best_settings"])
 
 def slicer_volume_adjustment(
     mesh_volume_cm3,
@@ -504,7 +507,10 @@ def main():
                     st.markdown(ai_result["raw"])
                 else:
                     st.info("AI suggestions are based on general community patterns.")
-                    st.json(ai_result["best_settings"])
+                    st.markdown(ai_result["raw"])
+                    if ai_result.get("best_settings"):
+                        with st.expander("📋 View Settings Summary"):
+                            st.json(ai_result["best_settings"])
 
     with tab_history:
         st.header("📜 Analysis History")
