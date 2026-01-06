@@ -248,8 +248,23 @@ def main():
         )
 
     if uploaded_stls:
+        # Initialize quantities in session state if not present
+        if "quantities" not in st.session_state:
+            st.session_state["quantities"] = {}
+        
+        # Clean up quantities for removed files
+        current_names = [f.name for f in uploaded_stls]
+        st.session_state["quantities"] = {
+            k: v for k, v in st.session_state["quantities"].items() 
+            if k in current_names
+        }
+
         with st.status("Processing files...", expanded=True) as status:
             for stl in uploaded_stls:
+                # Set default quantity to 1 if new
+                if stl.name not in st.session_state["quantities"]:
+                     st.session_state["quantities"][stl.name] = 1
+
                 st.write(f"Analyzing {stl.name}...")
                 # Write temp file for trimesh
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp:
@@ -275,20 +290,51 @@ def main():
 
     if batch_results:
         st.subheader("📦 Batch Analysis")
-        # Reorder columns to put File Name first
-        df = pd.DataFrame(batch_results)
-        cols = ["File Name"] + [c for c in df.columns if c != "File Name"]
-        df = df[cols]
         
-        st.dataframe(df, use_container_width=True)
+        # Interactive List with Quantities
+        total_cost_usd = 0
+        total_weight = 0
+        total_time = 0
         
-        # Summary Metrics
-        total_cost = df["Cost ($)"].sum()
-        total_weight = df["Weight (g)"].sum()
-        total_time = df["Print Time (hr)"].sum()
+        st.markdown("### Files")
+        for item in batch_results:
+            name = item["File Name"]
+            qty = st.session_state["quantities"].get(name, 1)
+            
+            # Calculate item totals
+            item_cost = item["Cost ($)"] * qty
+            item_weight = item["Weight (g)"] * qty
+            item_time = item["Print Time (hr)"] * qty
+            
+            # Update batch totals
+            total_cost_usd += item_cost
+            total_weight += item_weight
+            total_time += item_time
+            
+            with st.container():
+                c1, c2, c3, c4 = st.columns([3, 1, 1, 2])
+                with c1:
+                    st.write(f"**{name}**")
+                    st.caption(f"{item['Effective Volume (cm3)']} cm³ | {item['Print Time (hr)']} hr")
+                with c2:
+                    if st.button("➖", key=f"dec_{name}"):
+                        if st.session_state["quantities"][name] > 1:
+                            st.session_state["quantities"][name] -= 1
+                            st.rerun()
+                with c3:
+                    st.write(f"**Qty: {qty}**")
+                with c4:
+                     if st.button("➕", key=f"inc_{name}"):
+                         st.session_state["quantities"][name] += 1
+                         st.rerun()
+                st.divider()
+
+        # Totals in INR
+        exchange_rate = 83.0
+        total_cost_inr = total_cost_usd * exchange_rate
         
         c1, c2, c3 = st.columns(3)
-        c1.metric("Total Batch Cost", f"${total_cost:.2f}")
+        c1.metric("Total Batch Cost (₹)", f"₹{total_cost_inr:,.0f}")
         c2.metric("Total Batch Weight", f"{total_weight:.1f} g")
         c3.metric("Total Print Time", f"{total_time:.1f} hr")
 
@@ -307,7 +353,7 @@ def main():
         gst_rate = gst_pct / 100.0
 
         quote = generate_quote(
-            material_cost=total_cost * 83,  # USD to INR approx
+            material_cost=total_cost_inr, 
             print_time_hr=total_time,
             machine_rate_per_hr=machine_rate,
             electricity_per_hr=electricity_rate,
@@ -318,14 +364,16 @@ def main():
         
         st.table(pd.DataFrame(quote.items(), columns=["Item", "Amount (₹)"]))
         
-        # Save to History
-        if st.session_state.get("last_batch_len") != len(batch_results):
-             st.session_state["last_batch_len"] = len(batch_results)
+        # Save to History (Using aggregated count)
+        total_items = sum(st.session_state["quantities"].values())
+        
+        if st.session_state.get("last_batch_len") != total_items:
+             st.session_state["last_batch_len"] = total_items
              add_history_entry(
                  entry_type="Batch Analysis",
-                 name=f"{len(batch_results)} files",
-                 details=f"Cost: ${total_cost:.2f}, Weight: {total_weight:.1f}g",
-                 cost=total_cost * 83
+                 name=f"{total_items} items ({len(batch_results)} files)",
+                 details=f"Cost: ₹{total_cost_inr:.0f}, Weight: {total_weight:.1f}g",
+                 cost=total_cost_inr
              )
 
         # Batch features (AI + PDF)
@@ -335,14 +383,14 @@ def main():
         
         with col_actions1:
             summary_text = f"""
-            Batch Analysis of {len(batch_results)} files:
-            Total Cost: ${total_cost:.2f}
+            Batch Analysis of {len(batch_results)} unique files ({sum(st.session_state["quantities"].values())} total items):
+            Total Cost: ₹{total_cost_inr:.0f}
             Total Weight: {total_weight:.1f}g
             
             Files Overview:
-            {df.to_string(index=False)}
+            {pd.DataFrame(batch_results).to_string(index=False)}
             
-            Provide a summary recommendation for this production batch.
+            provide a summary recommendation for this production batch.
             """
             display_ai_section(summary_text, button_label="🧠 Analyze Batch with AI")
 
@@ -350,8 +398,9 @@ def main():
             # Generate Text/PDF report for batch
             batch_report_data = {
                 "Report Type": "Batch Analysis",
-                "File Count": len(batch_results),
-                "Total Cost": f"${total_cost:.2f}",
+                "Unique Files": len(batch_results),
+                "Total Items": sum(st.session_state["quantities"].values()),
+                "Total Cost": f"₹{total_cost_inr:.0f}",
                 "Total Weight": f"{total_weight:.1f} g",
                 "Infill": f"{infill}%",
                 "Density": f"{density} g/cm3",
