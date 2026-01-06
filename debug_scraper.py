@@ -1,6 +1,6 @@
 from scraper import scrape_model_page
 
-url = "https://makerworld.com/en/models/2196316-sir-mummel-the-easter-bunny-nutcracker#profileId-2385286"
+url = "https://www.thingiverse.com/thing:7239501"
 
 print(f"Testing URL: {url}")
 try:
