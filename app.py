@@ -33,6 +33,12 @@ PRINTER_PROFILES = {
         "nozzle_mm": 0.4,
         "max_build_mm": (256, 256, 256),
         "reliability": 0.95
+    },
+    "Anycubic Kobra 2 Neo": {
+        "max_speed_mm_s": 150,
+        "nozzle_mm": 0.4,
+        "max_build_mm": (220, 220, 250),
+        "reliability": 0.85
     }
 }
 

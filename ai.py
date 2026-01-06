@@ -11,12 +11,15 @@ def ai_analyze(prompt_text):
         }
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        # ✅ Stable model supported by v1beta
+        model = genai.GenerativeModel("gemini-1.0-pro")
         response = model.generate_content(prompt_text)
+
         return {
             "mode": "live",
             "analysis": response.text
         }
+
     except Exception as e:
         return {
             "mode": "error",
