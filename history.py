@@ -14,17 +14,22 @@ def load_history():
 
 def add_history_entry(entry_type, name, details, cost=0.0):
     """Adds a new entry to the history CSV."""
-    time.sleep(0.1)  # crude but effective for MVP
-    df = load_history()
-    
-    new_entry = {
-        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "Type": entry_type,
-        "Name": name,
-        "Details": details,
-        "Cost_INR": round(cost, 2)
-    }
-    
-    # Concat and save
-    df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
-    df.to_csv(HISTORY_FILE, index=False)
+    try:
+        time.sleep(0.1)  # crude but effective for MVP
+        df = load_history()
+        
+        new_entry = {
+            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Type": entry_type,
+            "Name": name,
+            "Details": details,
+            "Cost_INR": round(cost, 2)
+        }
+        
+        # Concat and save
+        df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
+        df.to_csv(HISTORY_FILE, index=False)
+        return True
+    except Exception as e:
+        print(f"Error saving history: {e}")
+        return False

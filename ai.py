@@ -1,16 +1,14 @@
 # ai.py
 import os
-import time
 
-# --- Safe import (future-proof) ---
 try:
     import google.generativeai as genai
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
 
-# --- Configure only if key exists ---
 API_KEY = os.getenv("GEMINI_API_KEY")
+
 if GEMINI_AVAILABLE and API_KEY:
     try:
         genai.configure(api_key=API_KEY)
@@ -18,83 +16,84 @@ if GEMINI_AVAILABLE and API_KEY:
         pass
 
 
-# --- Supported models (auto-fallback order) ---
-GEMINI_MODELS = [
-    "gemini-1.5-flash",     # Latest, fastest, most cost-effective
-    "gemini-1.5-pro",       # More capable alternative
-    "gemini-pro",           # Legacy fallback
-]
-
-
-def ai_analyze(prompt_text: str) -> dict:
-    """
-    Safe Gemini AI wrapper.
-
-    Returns:
-    {
-        "mode": "live" | "mock" | "error",
-        "analysis": str
-    }
-    """
-
-    # -------- HARD FALLBACKS --------
-    if not GEMINI_AVAILABLE:
-        return {
-            "mode": "mock",
-            "analysis": "AI unavailable (Gemini SDK not installed)."
-        }
-
-    if not API_KEY:
-        return {
-            "mode": "mock",
-            "analysis": (
-                "AI key not found.\n\n"
-                "Mock recommendation:\n"
-                "- Use 20% infill\n"
-                "- 0.2mm layer height\n"
-                "- Enable supports only if needed"
-            )
-        }
-
-    if not prompt_text or len(prompt_text.strip()) < 20:
-        return {
-            "mode": "mock",
-            "analysis": "Insufficient input text for AI analysis."
-        }
-
-    # -------- TRY MODELS SAFELY --------
-    last_error = None
-
-    for model_name in GEMINI_MODELS:
-        try:
-            model = genai.GenerativeModel(model_name)
-
-            # Simple timeout guard
-            start = time.time()
-            response = model.generate_content(prompt_text)
-            elapsed = time.time() - start
-
-            if not response or not response.text:
-                raise ValueError("Empty response from Gemini")
-
-            return {
-                "mode": "live",
-                "analysis": response.text.strip()
-            }
-
-        except Exception as e:
-            last_error = f"{model_name}: {str(e)}"
-            continue
-
-    # -------- FINAL FAILSAFE --------
+def _default_ai_output():
     return {
-        "mode": "error",
-        "analysis": (
-            "Gemini API failed.\n\n"
-            f"Last error: {last_error}\n\n"
-            "Fallback advice:\n"
-            "- Reduce infill if cosmetic\n"
-            "- Increase walls for strength\n"
-            "- Avoid steep overhangs"
-        )
+        "mode": "mock",
+        "summary": "General community-based recommendations.",
+        "best_settings": {
+            "layer_height": "0.2 mm",
+            "infill": "15–20%",
+            "nozzle_temp": "200–210 °C",
+            "bed_temp": "55–60 °C",
+            "supports": "Only for overhangs > 45°",
+            "orientation": "Flat on bed"
+        },
+        "common_failures": [
+            "Warping on large flat surfaces",
+            "Stringing at high temperatures"
+        ]
     }
+
+
+def ai_analyze(scraped_text: str) -> dict:
+    """
+    ALWAYS returns:
+    - mode
+    - summary
+    - best_settings
+    - common_failures
+    """
+
+    # ---- SAFETY FIRST ----
+    if not scraped_text or len(scraped_text.strip()) < 100:
+        return _default_ai_output()
+
+    if not GEMINI_AVAILABLE or not API_KEY:
+        return _default_ai_output()
+
+    prompt = f"""
+You are a 3D printing expert.
+
+From the text below, extract ONLY settings that users ACTUALLY used successfully.
+
+TEXT:
+{scraped_text}
+
+Respond EXACTLY in this format:
+
+SUMMARY:
+<short summary>
+
+BEST_SETTINGS:
+Layer Height:
+Infill:
+Nozzle Temp:
+Bed Temp:
+Supports:
+Orientation:
+
+COMMON_FAILURES:
+- bullet points
+"""
+
+    try:
+        model = genai.GenerativeModel("gemini-1.0-pro")
+        response = model.generate_content(prompt)
+
+        if not response or not response.text:
+            return _default_ai_output()
+
+        text = response.text.strip()
+
+        # VERY simple parsing (safe)
+        return {
+            "mode": "live",
+            "summary": "Extracted from user comments and description.",
+            "best_settings": {
+                "raw_text": text   # show as-is (no KeyError ever)
+            },
+            "common_failures": []
+        }
+
+    except Exception:
+        return _default_ai_output()
