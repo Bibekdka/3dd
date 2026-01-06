@@ -20,8 +20,9 @@ if GEMINI_AVAILABLE and API_KEY:
 
 # --- Supported models (auto-fallback order) ---
 GEMINI_MODELS = [
-    "gemini-1.0-pro",   # stable
-    "gemini-pro"        # alias fallback
+    "gemini-1.5-flash",     # Latest, fastest, most cost-effective
+    "gemini-1.5-pro",       # More capable alternative
+    "gemini-pro",           # Legacy fallback
 ]
 
 
