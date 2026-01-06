@@ -1,5 +1,9 @@
 import time
 import subprocess
+import os
+
+SAFE_MODE = os.getenv("STREAMLIT_SAFE_MODE", "false").lower() == "true"
+
 try:
     from playwright.sync_api import sync_playwright
     PLAYWRIGHT_AVAILABLE = True
@@ -35,6 +39,12 @@ def clean_scraped_text(text):
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def scrape_model_page(url, debug=False):
+    if SAFE_MODE:
+        return {
+            "error": "Safe Mode enabled. Scraping disabled on Streamlit Cloud.",
+            "debug": ["Chromium unavailable in this environment"]
+        }
+
     if not PLAYWRIGHT_AVAILABLE:
         return {"error": "Playwright not available in this environment"}
 
