@@ -161,7 +161,7 @@ def analyze_stl(file_path, density, cost_per_kg, infill, walls, speed_mm_s=60, n
             "Raw Volume (cm3)": round(volume_cm3, 2),
             "Effective Volume (cm3)": round(effective_volume, 2),
             "Weight (g)": round(weight_g, 2),
-            "Cost ($)": round(cost, 2),
+            "Cost (₹)": round(cost, 2),
             "Print Time (hr)": print_time,
             "Vertices": len(mesh.vertices),
             "Faces": len(mesh.faces),
@@ -239,7 +239,7 @@ def main():
     with col2:
         st.subheader("Material Settings")
         density = st.number_input("Material Density (g/cm3)", value=1.24) # PLA Default
-        cost_per_kg = st.number_input("Cost per kg ($)", value=20.0)
+        cost_per_kg = st.number_input("Cost per kg (₹)", value=1200.0)
 
     uploaded_stls = None
     batch_results = []
@@ -302,7 +302,7 @@ def main():
         st.subheader("📦 Batch Analysis")
         
         # Interactive List with Quantities
-        total_cost_usd = 0
+        total_cost_inr = 0
         total_weight = 0
         total_time = 0
         
@@ -312,12 +312,12 @@ def main():
             qty = st.session_state["quantities"].get(name, 1)
             
             # Calculate item totals
-            item_cost = item["Cost ($)"] * qty
+            item_cost = item["Cost (₹)"] * qty
             item_weight = item["Weight (g)"] * qty
             item_time = item["Print Time (hr)"] * qty
             
             # Update batch totals
-            total_cost_usd += item_cost
+            total_cost_inr += item_cost
             total_weight += item_weight
             total_time += item_time
             
@@ -340,8 +340,6 @@ def main():
                 st.divider()
 
         # Totals in INR
-        exchange_rate = 83.0
-        total_cost_inr = total_cost_usd * exchange_rate
         
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Batch Cost (₹)", f"₹{total_cost_inr:,.0f}")
