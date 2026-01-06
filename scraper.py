@@ -70,8 +70,16 @@ def scrape_model_page(url, debug=False):
             )
             page = context.new_page()
 
-            page.goto(url, wait_until="networkidle", timeout=60000)
-            logs.append("Page loaded")
+            # Use domcontentloaded which is faster and less prone to hanging on analytics/ads
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            
+            # Optional: Try to wait for network idle but don't block forever
+            try:
+                page.wait_for_load_state("networkidle", timeout=5000)
+            except:
+                pass # Continue even if network is busy
+                
+            logs.append("Page loaded (domcontentloaded)")
 
             # Scroll to load lazy content
             for _ in range(5):
