@@ -1,31 +1,99 @@
+# ai.py
 import os
-import google.generativeai as genai
+import time
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# --- Safe import (future-proof) ---
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
 
-def ai_analyze(prompt_text):
-    if not os.getenv("GEMINI_API_KEY"):
+# --- Configure only if key exists ---
+API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_AVAILABLE and API_KEY:
+    try:
+        genai.configure(api_key=API_KEY)
+    except Exception:
+        pass
+
+
+# --- Supported models (auto-fallback order) ---
+GEMINI_MODELS = [
+    "gemini-1.0-pro",   # stable
+    "gemini-pro"        # alias fallback
+]
+
+
+def ai_analyze(prompt_text: str) -> dict:
+    """
+    Safe Gemini AI wrapper.
+
+    Returns:
+    {
+        "mode": "live" | "mock" | "error",
+        "analysis": str
+    }
+    """
+
+    # -------- HARD FALLBACKS --------
+    if not GEMINI_AVAILABLE:
         return {
             "mode": "mock",
-            "analysis": "Mock AI: Increase infill for strength."
+            "analysis": "AI unavailable (Gemini SDK not installed)."
         }
 
-    try:
-        # ✅ Stable model supported by v1beta
-        model = genai.GenerativeModel("gemini-1.0-pro")
-        response = model.generate_content(prompt_text)
-
-        if not response.text:
-             raise ValueError("Empty response from AI")
-
+    if not API_KEY:
         return {
-            "mode": "live",
-            "analysis": response.text
+            "mode": "mock",
+            "analysis": (
+                "AI key not found.\n\n"
+                "Mock recommendation:\n"
+                "- Use 20% infill\n"
+                "- 0.2mm layer height\n"
+                "- Enable supports only if needed"
+            )
         }
 
-    except Exception as e:
-        # Return a clean error message
+    if not prompt_text or len(prompt_text.strip()) < 20:
         return {
-            "mode": "error",
-            "analysis": f"AI Error: {str(e)}"
+            "mode": "mock",
+            "analysis": "Insufficient input text for AI analysis."
         }
+
+    # -------- TRY MODELS SAFELY --------
+    last_error = None
+
+    for model_name in GEMINI_MODELS:
+        try:
+            model = genai.GenerativeModel(model_name)
+
+            # Simple timeout guard
+            start = time.time()
+            response = model.generate_content(prompt_text)
+            elapsed = time.time() - start
+
+            if not response or not response.text:
+                raise ValueError("Empty response from Gemini")
+
+            return {
+                "mode": "live",
+                "analysis": response.text.strip()
+            }
+
+        except Exception as e:
+            last_error = f"{model_name}: {str(e)}"
+            continue
+
+    # -------- FINAL FAILSAFE --------
+    return {
+        "mode": "error",
+        "analysis": (
+            "Gemini API failed.\n\n"
+            f"Last error: {last_error}\n\n"
+            "Fallback advice:\n"
+            "- Reduce infill if cosmetic\n"
+            "- Increase walls for strength\n"
+            "- Avoid steep overhangs"
+        )
+    }

@@ -437,11 +437,24 @@ def main():
             st.stop()
 
         with st.spinner("Scraping page (this may take 10-20s)..."):
-            scraped_data = scrape_model_page(model_url, debug=debug_mode)
+            try:
+                scraped_data = scrape_model_page(model_url, debug=debug_mode)
+                
+                if "error" in scraped_data:
+                    err_msg = scraped_data['error']
+                    if "Timeout" in err_msg:
+                        st.warning("⚠️ Scraper timed out (MakerWorld/Thingiverse often block bots). Please use the manual upload option.")
+                    else:
+                        st.error(f"Scraping failed: {err_msg}")
+            except Exception as e:
+                # Fallback for unexpected crashes
+                if "Timeout" in str(e):
+                    st.warning("⚠️ Scraper timed out. Please try manually uploading the STL.")
+                else:
+                    st.error(f"Critical error during scraping: {e}")
+                scraped_data = None # Ensure logic downstream doesn't break
             
-            if "error" in scraped_data:
-                st.error(f"Scraping failed: {scraped_data['error']}")
-            else:
+            if scraped_data and "error" not in scraped_data:
                 st.success("Scraping successful!")
                 # Save to History
                 add_history_entry(
