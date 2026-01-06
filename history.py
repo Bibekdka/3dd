@@ -1,5 +1,6 @@
 import pandas as pd
 import os
+import time
 from datetime import datetime
 
 HISTORY_FILE = "history.csv"
@@ -13,6 +14,7 @@ def load_history():
 
 def add_history_entry(entry_type, name, details, cost=0.0):
     """Adds a new entry to the history CSV."""
+    time.sleep(0.1)  # crude but effective for MVP
     df = load_history()
     
     new_entry = {

@@ -78,9 +78,11 @@ def display_ai_section(prompt_text, button_label="Generate AI Assessment"):
         if ai_result["mode"] == "live":
             st.success("Gemini AI Analysis")
             st.markdown(ai_result["analysis"])
-        else:
+        elif ai_result["mode"] == "mock":
             st.warning("Using mock AI output (Check API Key or Connection)")
-            st.json(ai_result)
+            st.write(ai_result["analysis"])
+        else:
+            st.error(f"AI Error: {ai_result.get('analysis', 'Unknown error')}")
 
 def slicer_volume_adjustment(
     mesh_volume_cm3,
@@ -121,8 +123,11 @@ def estimate_print_time(
 
 def analyze_stl(file_path, density, cost_per_kg, infill, walls, speed_mm_s=60, nozzle_mm=0.4):
     try:
-        mesh = trimesh.load(file_path)
+        mesh = trimesh.load(file_path, force="mesh")
         
+        if mesh.is_empty:
+            raise ValueError("Empty or invalid STL mesh")
+
         if not mesh.is_watertight:
             # We can log this but for batch just return stats
             pass
@@ -227,6 +232,9 @@ def main():
         density = st.number_input("Material Density (g/cm3)", value=1.24) # PLA Default
         cost_per_kg = st.number_input("Cost per kg ($)", value=20.0)
 
+    uploaded_stls = None
+    batch_results = []
+
     tab_estimator, tab_history = st.tabs(["🚀 Estimator", "📜 History"])
 
     with tab_estimator:
@@ -235,8 +243,6 @@ def main():
             type=["stl"],
             accept_multiple_files=True
         )
-
-        batch_results = []
 
     if uploaded_stls:
         with st.status("Processing files...", expanded=True) as status:
@@ -421,8 +427,11 @@ def main():
                 if ai_result["mode"] == "live":
                     st.markdown("### 🧠 AI Model Report")
                     st.markdown(ai_result["analysis"])
+                elif ai_result["mode"] == "mock":
                     st.warning("Using mock AI output")
                     st.write(ai_result["analysis"])
+                else:
+                    st.error(f"AI Error: {ai_result.get('analysis', 'Unknown error')}")
 
     with tab_history:
         st.header("📜 Analysis History")
