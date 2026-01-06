@@ -54,30 +54,29 @@ def scrape_model_page(url, debug=False):
 
     try:
         with sync_playwright() as p:
-            # Attempt to launch browser, install if missing
-            try:
-                browser = p.chromium.launch(headless=True)
-            except Exception as e:
-                if "Executable doesn't exist" in str(e):
-                    logs.append("Installing Playwright browsers...")
-                    subprocess.run(["playwright", "install", "chromium"])
-                    browser = p.chromium.launch(headless=True)
-                else:
-                    raise e
-                    
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 Chrome/120 Safari/537.36"
+            # Launch with robust args for Streamlit Cloud/Linux
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                ],
             )
+
+            # Context with real browser spoofing
+            context = browser.new_context(
+                viewport={"width": 1280, "height": 800},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            
             page = context.new_page()
 
-            # Use domcontentloaded which is faster and less prone to hanging on analytics/ads
-            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            # Robust navigation strategy
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(5000)  # Allow JS to hydrate
             
-            # Optional: Try to wait for network idle but don't block forever
-            try:
-                page.wait_for_load_state("networkidle", timeout=5000)
-            except:
-                pass # Continue even if network is busy
+            logs.append("Page loaded (domcontentloaded + 5s wait)")
                 
             logs.append("Page loaded (domcontentloaded)")
 
