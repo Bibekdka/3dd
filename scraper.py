@@ -55,14 +55,30 @@ def scrape_model_page(url, debug=False):
     try:
         with sync_playwright() as p:
             # Launch with robust args for Streamlit Cloud/Linux
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-blink-features=AutomationControlled",
-                ],
-            )
+            # Try to launch, auto-install if missing
+            try:
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-blink-features=AutomationControlled",
+                    ],
+                )
+            except Exception as e:
+                if "Executable doesn't exist" in str(e):
+                    logs.append("Installing Playwright browsers (first run)...")
+                    subprocess.run(["playwright", "install", "chromium"], check=False)
+                    browser = p.chromium.launch(
+                        headless=True,
+                        args=[
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-blink-features=AutomationControlled",
+                        ],
+                    )
+                else:
+                    raise e
 
             # Context with real browser spoofing
             context = browser.new_context(
