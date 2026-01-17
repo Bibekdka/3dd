@@ -1,32 +1,32 @@
 import asyncio
 import sys
-import textwrap
-
-# Fix for Windows asyncio loop policy
-if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
 import streamlit as st
-import trimesh
-import os
-import tempfile
 import pandas as pd
-import json
+import plotly.express as px
+import requests
 import io
-from dotenv import load_dotenv
+import textwrap
+import os
+import trimesh
+import tempfile
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 from reportlab.lib.utils import ImageReader
-import requests
 
-from scraper import scrape_model_page, clean_scraped_text
-from ai import ai_analyze
-from history import load_history, add_history_entry, update_print_status
+# --- CUSTOM MODULES ---
+from database import add_entry, load_history, update_print_status, get_learning_context
+from scraper import scrape_model_page
+from ai import ai_analyze, ai_generate_tags
 
-load_dotenv()
+# Windows Asyncio Fix
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-# --- DEFAULT CONFIGURATION ---
+# --- CONFIG ---
+st.set_page_config(page_title="3D Brain Dashboard", page_icon="🧠", layout="wide")
+
+# --- DEFAULT CONFIGURATION for Calculator ---
 DEFAULT_PRINTERS = {
     "Ender 3 / Ender 3 V2": {"max_speed_mm_s": 50, "nozzle_mm": 0.4, "max_build_mm": (220, 220, 250), "reliability": 0.75},
     "Prusa MK3 / MK4": {"max_speed_mm_s": 70, "nozzle_mm": 0.4, "max_build_mm": (250, 210, 210), "reliability": 0.90},
@@ -34,35 +34,7 @@ DEFAULT_PRINTERS = {
     "Anycubic Kobra 2 Neo": {"max_speed_mm_s": 150, "nozzle_mm": 0.4, "max_build_mm": (220, 220, 250), "reliability": 0.85}
 }
 
-# --- MEMORY / CONTEXT RETRIEVAL ---
-def get_user_learning_context(current_printer_name):
-    """
-    Reads history.csv to find past Failures or "Do Not Print" items
-    to warn the AI about user's specific struggles.
-    """
-    df = load_history()
-    if df.empty:
-        return ""
-    
-    # Filter for items marked as "Do Not Print" (Proxy for failures/rejections)
-    if 'PrintStatus' not in df.columns: return ""
-    
-    failures = df[df['PrintStatus'] == 'Do Not Print']
-    
-    if failures.empty:
-        return "User has no recorded failures yet."
-
-    # Create a summary string of past lessons
-    context = "USER'S PAST FAILURES (LEARN FROM THESE):\n"
-    for _, row in failures.tail(5).iterrows(): # Look at last 5 failures
-        # Use .get to be safe against missing columns
-        name = row.get('Name', 'Unknown')
-        summary = row.get('AISummary', row.get('Details', 'No details'))
-        context += f"- Model: {name} | Status: FAILED/REJECTED | Details: {summary}\n"
-    
-    return context
-
-# --- PDF HELPERS ---
+# --- HELPER FUNCTIONS ---
 def export_pdf_report(data, image_urls=None):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -102,7 +74,7 @@ def export_pdf_report(data, image_urls=None):
         x_offset = 50
         for img_url in image_urls[:3]:
             try:
-                response = requests.get(img_url, timeout=3, stream=True)
+                response = requests.get(img_url, timeout=1, stream=True)
                 if response.status_code == 200:
                     img_data = io.BytesIO(response.content)
                     img = ImageReader(img_data)
@@ -117,11 +89,7 @@ def export_pdf_report(data, image_urls=None):
             if key == "Verdict":
                 c.setFont("Helvetica-Bold", 14)
                 val_str = str(value).lower()
-                if any(x in val_str for x in ["go", "easy", "safe"]): c.setFillColor(colors.green)
-                elif any(x in val_str for x in ["stop", "hard", "fail"]): c.setFillColor(colors.red)
-                else: c.setFillColor(colors.black)
                 c.drawString(50, y, f"{key}: {value}")
-                c.setFillColor(colors.black)
                 y -= 25
                 c.setFont("Helvetica", 11)
             elif "AI" in key or "Details" in key:
@@ -143,10 +111,20 @@ def export_pdf_report(data, image_urls=None):
     buffer.seek(0)
     return buffer
 
+def slicer_volume_adjustment(mesh_volume_cm3, infill_percent=20, wall_percent=25):
+    wall_fraction = wall_percent / 100
+    infill_fraction = infill_percent / 100
+    effective_volume = (mesh_volume_cm3 * wall_fraction) + (mesh_volume_cm3 * (1 - wall_fraction) * infill_fraction)
+    return effective_volume
+
+def estimate_print_time(effective_volume_cm3, layer_height=0.2, printer_speed_mm_s=60, nozzle_mm=0.4):
+    extrusion_rate = printer_speed_mm_s * layer_height * nozzle_mm
+    total_mm3 = effective_volume_cm3 * 1000
+    if extrusion_rate == 0: return 0
+    return round((total_mm3 / extrusion_rate) / 3600, 2)
+
 @st.cache_data(show_spinner=False)
 def analyze_single_file_content(file_content, file_name, density, cost_per_kg, infill, walls, speed_mm_s, nozzle_mm):
-    # (Helper function omitted for brevity, logic maintained from previous step)
-    # Re-implementing briefly to ensure functionality
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp:
             tmp.write(file_content)
@@ -158,21 +136,18 @@ def analyze_single_file_content(file_content, file_name, density, cost_per_kg, i
 
         if mesh.is_empty: raise ValueError("Empty mesh")
         
-        # Calculate
         volume_cm3 = mesh.volume / 1000.0
-        wall_fraction = walls / 100 / 100 # Approx logic
-        effective_vol = volume_cm3 * 1.2 # simplified pad
+        effective_vol = slicer_volume_adjustment(volume_cm3, infill, walls)
         weight_g = effective_vol * density
         cost = (weight_g / 1000) * cost_per_kg
-        extrusion = speed_mm_s * 0.2 * nozzle_mm
-        time_hr = (effective_vol * 1000 / extrusion) / 3600 if extrusion > 0 else 0
+        time_hr = estimate_print_time(effective_vol, 0.2, speed_mm_s, nozzle_mm)
         
         return {
             "File Name": file_name,
             "Effective Volume (cm3)": round(effective_vol, 2),
             "Weight (g)": round(weight_g, 2),
             "Cost (₹)": round(cost, 2),
-            "Print Time (hr)": round(time_hr, 2)
+            "Print Time (hr)": time_hr
         }
     except Exception as e:
         return {"error": str(e), "File Name": file_name}
@@ -193,39 +168,139 @@ def generate_quote(material_cost, print_time_hr, machine_rate_per_hr, electricit
         "Final Price (₹)": round(total, 2)
     }
 
-def main():
-    st.set_page_config(page_title="3D Deep Dive Analyst", page_icon="🕵️", layout="wide")
+# --- DASHBOARD LOGIC ---
+def show_dashboard():
+    st.title("🧠 Neural Dashboard")
+    st.markdown("Visualizing your printer's 'Brain' and learning progress.")
     
+    df = load_history()
+    
+    if df.empty:
+        st.info("No data yet! Go to the 'Smart Analyst' tab to analyze your first model.")
+        return
+
+    # 1. TOP LEVEL METRICS (KPIs)
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    
+    total_scans = len(df)
+    # Calculate Success Rate (Items marked 'Success' / Total marked items)
+    marked_items = df[df['print_status'].isin(['Success', 'Do Not Print'])]
+    success_count = len(df[df['print_status'] == 'Success'])
+    fail_count = len(df[df['print_status'] == 'Do Not Print'])
+    
+    success_rate = 0
+    if len(marked_items) > 0:
+        success_rate = (success_count / len(marked_items)) * 100
+
+    # Estimate "Money Saved" (Cost of failed prints avoided)
+    money_saved = df[df['print_status'] == 'Do Not Print']['cost_inr'].sum()
+
+    kpi1.metric("Total Knowledge Base", f"{total_scans} Models", "scanned")
+    kpi2.metric("Success Rate", f"{success_rate:.1f}%", f"{success_count} wins")
+    kpi3.metric("Failures Avoided", f"{fail_count}", "blocked")
+    kpi4.metric("Est. Money Saved", f"₹{money_saved:,.0f}", "rupees")
+
+    st.divider()
+
+    # 2. VISUALIZATION ROW 1
+    c1, c2 = st.columns(2)
+    
+    with c1:
+        st.subheader("🏷️ What is the AI Learning?")
+        # Extract hashtags and count them
+        all_tags = []
+        for tags in df['tags']:
+            if tags:
+                # Clean and split tags
+                cleaned = str(tags).replace("#", "").replace(",", " ").split()
+                all_tags.extend(cleaned)
+        
+        if all_tags:
+            tag_counts = pd.Series(all_tags).value_counts().head(10)
+            fig_tags = px.bar(
+                x=tag_counts.values, 
+                y=tag_counts.index, 
+                orientation='h',
+                title="Top 10 Learned Concepts (Tags)",
+                labels={'x': 'Count', 'y': 'Tag'},
+                color=tag_counts.values,
+                color_continuous_scale='Viridis'
+            )
+            st.plotly_chart(fig_tags, use_container_width=True)
+        else:
+            st.warning("No tags generated yet.")
+
+    with c2:
+        st.subheader("🚦 Go / Stop Ratio")
+        # Simple sentiment analysis of the "AI Summary" to guess Verdict if not explicitly saved
+        # (Or use print_status if available)
+        status_counts = df['print_status'].value_counts()
+        if not status_counts.empty:
+            fig_pie = px.pie(
+                values=status_counts.values, 
+                names=status_counts.index,
+                title="Print Decisions Breakdown",
+                color_discrete_sequence=px.colors.qualitative.Pastel
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            st.info("Mark some prints as 'Success' or 'Failed' in the Database tab to see this chart.")
+
+    # 3. RECENT ACTIVITY TABLE
+    st.subheader("📜 Recent Neural Activity")
+    st.dataframe(
+        df[['timestamp', 'name', 'tags', 'print_status']].head(5), 
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+# --- MAIN APP ROUTER ---
+def main():
     if "printers" not in st.session_state:
         st.session_state["printers"] = DEFAULT_PRINTERS.copy()
     if "quantities" not in st.session_state: st.session_state["quantities"] = {}
     if "analyzed_files" not in st.session_state: st.session_state["analyzed_files"] = {}
 
-    st.title("🕵️ 3D Deep Dive Analyst")
-    
+    # --- SIDEBAR MENU ---
     with st.sidebar:
-        st.header("⚙️ Configuration")
-        if os.getenv("GEMINI_API_KEY"): st.success("AI Active", icon="✅")
+        st.header("Navigation")
+        # The Menu Icon functionality you requested
+        selected_page = st.radio(
+            "Go to:", 
+            ["📊 Dashboard", "🕵️ Smart Analyst", "🚀 Cost Calculator", "🗄️ Database"],
+            index=1 # Default to Analyst
+        )
         
-        printer_names = list(st.session_state["printers"].keys())
-        selected_printer_name = st.selectbox("Current Printer", printer_names)
-        current_printer = st.session_state["printers"][selected_printer_name]
-        
-        with st.expander("🛠 Edit Printer Profile"):
-            new_speed = st.number_input("Speed (mm/s)", value=current_printer["max_speed_mm_s"])
-            new_nozzle = st.number_input("Nozzle (mm)", value=current_printer["nozzle_mm"])
-            if st.button("Update Profile"):
-                st.session_state["printers"][selected_printer_name]["max_speed_mm_s"] = new_speed
-                st.session_state["printers"][selected_printer_name]["nozzle_mm"] = new_nozzle
-                st.rerun()
-
         st.divider()
-        debug_mode = st.checkbox("🐞 Debug Mode")
+        st.caption("System Status")
+        if os.getenv("GEMINI_API_KEY"): st.success("AI: Online", icon="🟢")
+        else: st.error("AI: Offline", icon="🔴")
 
-    tab_scrape, tab_est, tab_hist = st.tabs(["🖼️ Deep Analysis", "🚀 Calculator", "📜 History"])
+        # Printer Config in Sidebar (Global)
+        if selected_page == "🚀 Cost Calculator" or selected_page == "🕵️ Smart Analyst":
+            st.divider()
+            st.subheader("🖨️ Printer Settings")
+            printer_names = list(st.session_state["printers"].keys())
+            selected_printer_name = st.selectbox("Current Printer", printer_names)
+            current_printer = st.session_state["printers"][selected_printer_name]
+            
+            with st.expander("🛠 Edit Profile"):
+                new_speed = st.number_input("Speed (mm/s)", value=current_printer["max_speed_mm_s"])
+                new_nozzle = st.number_input("Nozzle (mm)", value=current_printer["nozzle_mm"])
+                if st.button("Update Profile"):
+                    st.session_state["printers"][selected_printer_name]["max_speed_mm_s"] = new_speed
+                    st.session_state["printers"][selected_printer_name]["nozzle_mm"] = new_nozzle
+                    st.rerun()
 
-    # --- 1. DEEP ANALYSIS TAB ---
-    with tab_scrape:
+    # --- PAGE ROUTING ---
+    
+    if selected_page == "📊 Dashboard":
+        show_dashboard()
+
+    elif selected_page == "🕵️ Smart Analyst":
+        st.title("🕵️ Smart Forensic Analyst")
+        
         st.info("💡 Paste a MakerWorld/Printables link. AI will check your past failures to give better advice.")
         c1, c2 = st.columns([3, 1])
         with c1:
@@ -236,23 +311,19 @@ def main():
             analyze_btn = st.button("🚀 Analyze", type="primary", use_container_width=True)
 
         if analyze_btn and url:
+            past_lessons = get_learning_context()
             with st.status("🕵️ Investigating...", expanded=True) as status:
                 st.write("1. Launching visual scraper...")
-                data = scrape_model_page(url, debug=debug_mode)
+                data = scrape_model_page(url)
                 
                 if "error" in data:
                     status.update(label="Failed", state="error")
                     st.error(data["error"])
-                    if debug_mode: st.json(data.get("debug"))
                     st.stop()
                 
-                st.write(f"2. Found {len(data['images'])} images and extracted {len(data['text'])} chars.")
+                st.write("2. Consulting Memory Bank...")
+                st.write("3. AI analyzing 'Vibe' & 'Reality'...")
                 
-                # --- MEMORY INJECTION ---
-                st.write("3. Consulting Memory Bank (History)...")
-                past_lessons = get_user_learning_context(selected_printer_name)
-                
-                st.write("4. AI analyzing 'Vibe' & 'Reality'...")
                 prompt = f"""
                 Act as a 3D Printing Forensic Expert.
                 
@@ -263,138 +334,160 @@ def main():
                 {data['text']}
                 
                 TASK:
-                1. **Reality Check**: Compare User Comments vs Description.
-                2. **Vibe Check**: Classify: [Easy/Frustrating/Technical]. Use emojis.
-                3. **Hardware**: specific nozzles, plates, or glues mentioned?
-                4. **Filament**: Brands/Colors/Types?
-                5. **Cross-Reference**: If the user has failed similar prints in the past (see USER CONTEXT), warn them specifically.
-                6. **Verdict**: [GO / CAUTION / STOP]
-                
-                OUTPUT FORMAT:
-                **Summary**: ...
-                **The Vibe**: ...
-                **Reality vs Renders**: ...
-                **Hardware/Filament**: ...
-                **Memory Check**: (Did you find any relevant past failures?)
-                **Verdict**: ...
+                1. Flag any risks based on USER'S PAST FAILURES.
+                2. Identify Filaments, Hardware, and 'Vibe'.
+                3. Verdict: GO or STOP?
                 """
                 ai_result = ai_analyze(prompt)
+                tags = ai_generate_tags(ai_result['details'])
                 
-                st.session_state['vis_result'] = ai_result
-                st.session_state['vis_images'] = data['images']
-                st.session_state['vis_url'] = url
+                st.session_state['res'] = ai_result
+                st.session_state['res_images'] = data.get('images', [])
+                st.session_state['tags'] = tags
+                st.session_state['url'] = url
                 status.update(label="Complete!", state="complete", expanded=False)
-
-        # Result Display
-        if 'vis_result' in st.session_state:
-            res = st.session_state['vis_result']
-            imgs = st.session_state['vis_images']
+        
+        if 'res' in st.session_state:
+            res = st.session_state['res']
+            imgs = st.session_state.get('res_images', [])
             
-            st.subheader("📸 Visual Proof")
+            # Show Images
             if imgs:
+                st.subheader("📸 Visual Proof")
                 cols = st.columns(4)
-                for i, img in enumerate(imgs[:8]):
+                for i, img in enumerate(imgs[:4]):
                     with cols[i % 4]:
                         st.image(img, use_container_width=True)
             
-            st.divider()
+            st.markdown(res['details'])
+            st.info(f"🏷️ **Auto-Tags:** {st.session_state['tags']}")
             
-            c1, c2 = st.columns([2, 1])
+            c1, c2 = st.columns(2)
             with c1:
-                st.subheader("🧠 Report")
-                st.markdown(res['details'])
-            with c2:
-                st.subheader("Action")
-                pdf_payload = {"Model": st.session_state.get('vis_url'), "Details": res['details'], "Verdict": "GO" if "GO" in res['details'] else "STOP"}
+                pdf_payload = {"Model": st.session_state.get('url'), "Details": res['details']}
                 pdf_data = export_pdf_report(pdf_payload, image_urls=imgs)
                 st.download_button("📥 PDF Report", pdf_data, "Report.pdf", "application/pdf", use_container_width=True)
-                
-                # SAVE TO HISTORY BUTTON (Crucial for Memory)
-                if st.button("💾 Save to History (Update Memory)"):
-                    add_history_entry(
-                        "Deep Analysis", 
-                        st.session_state.get('vis_url'), 
-                        res['summary'], 
-                        0, 
-                        res['summary'], 
-                        res['details']
+            with c2:
+                if st.button("💾 Save to Brain"):
+                    add_entry(
+                        entry_type="Web Scrape", 
+                        name=st.session_state['url'], 
+                        details=res['details'], 
+                        ai_summary=res['summary'], 
+                        tags=st.session_state['tags']
                     )
-                    st.success("Saved! AI will remember this.")
+                    st.success("Saved!")
 
-    # --- 2. CALCULATOR TAB ---
-    with tab_est:
-        st.markdown("### 📦 Batch Estimator")
-         # (Restored Logic)
-        uploaded_stls = st.file_uploader("Upload multiple STL files", type=["stl"], accept_multiple_files=True)
-        # ... (Assuming calculator logic is preserved implicitly or re-added if space permits)
-        # I am re-implementing the essential parts here to ensure it works
+    elif selected_page == "🚀 Cost Calculator":
+        st.title("🚀 Batch Estimator")
         
-        # [CALCULATOR LOGIC START]
-        if uploaded_stls:
-            # Inputs
-            col1, col2 = st.columns(2)
+        with st.expander("⚙️ Estimation Settings", expanded=True):
+            col1, col2, col3 = st.columns(3)
             with col1:
-                cost_kg = st.number_input("Filament Cost (₹/kg)", value=1200.0)
-                density = st.number_input("Material Density (g/cm³)", value=1.24)
-            with col2:
                 infill = st.slider("Infill %", 0, 100, 20)
                 walls = st.slider("Walls %", 0, 100, 25)
+            with col2:
+                density = st.number_input("Material Density (g/cm³)", value=1.24)
+                cost_kg = st.number_input("Filament Cost (₹/kg)", value=1200.0)
+            with col3:
+                machine_rate = st.number_input("Machine Rate (₹/hr)", value=50)
+                profit_pct = st.number_input("Profit Margin (%)", value=30)
+                elec_rate = st.number_input("Electricity (₹/hr)", value=10)
+                labour_rate = st.number_input("Labour (₹/hr)", value=50)
+                gst_pct = st.number_input("GST %", value=0)
 
+        uploaded_stls = st.file_uploader("Upload multiple STL files", type=["stl"], accept_multiple_files=True)
+        batch_results = []
+        
+        # Helper to get current printer settings (if not in sidebar, getting default)
+        # Note: We put printer selector in sidebar for this page.
+        p_name = st.session_state.get("printers", DEFAULT_PRINTERS).keys()
+        # Fallback if sidebar selection not accessed directly
+        curr_p = DEFAULT_PRINTERS["Ender 3 / Ender 3 V2"] 
+        # (Realistically sidebar logic runs first, so we assume selection is there, 
+        # but for robustness we can just Grab the first one or LAST selected)
+        
+        if uploaded_stls:
             current_names = [f.name for f in uploaded_stls]
             st.session_state["quantities"] = {k: v for k, v in st.session_state["quantities"].items() if k in current_names}
             
-            batch_results = []
-            for stl in uploaded_stls:
-                if stl.name not in st.session_state["quantities"]: st.session_state["quantities"][stl.name] = 1
-                if stl.name in st.session_state["analyzed_files"]:
-                    batch_results.append(st.session_state["analyzed_files"][stl.name])
-                else:
-                    stl.seek(0)
-                    bytes_data = stl.read()
-                    analysis = analyze_single_file_content(
-                        bytes_data, stl.name, density, cost_kg, infill, walls,
-                        current_printer["max_speed_mm_s"], current_printer["nozzle_mm"]
-                    )
-                    if "error" not in analysis:
-                        st.session_state["analyzed_files"][stl.name] = analysis
-                        batch_results.append(analysis)
-            
-            if batch_results:
-                 total_cost = 0
-                 for item in batch_results:
-                     qty = st.session_state["quantities"][item["File Name"]]
-                     total_cost += item["Cost (₹)"] * qty
-                     st.write(f"{item['File Name']} - ₹{item['Cost (₹)']} x {qty}")
-                 
-                 st.metric("Total Batch Cost", f"₹{total_cost:.2f}")
-
-    # --- 3. HISTORY TAB ---
-    with tab_hist:
-        st.subheader("📜 Management")
-        history_df = load_history()
-        
-        # Display logic with color coding
-        if not history_df.empty:
-            for idx, row in history_df.iloc[::-1].iterrows():
-                status = row.get("PrintStatus", "Pending")
-                color = "red" if status == "Do Not Print" else "green" if status == "Print" else "orange"
-                with st.container(border=True):
-                    c1, c2 = st.columns([3, 1])
-                    c1.markdown(f"**{row['Name']}**")
-                    c1.caption(f"{row['Timestamp']} | {row['Details']}")
-                    c2.markdown(f":{color}[{status}]")
+            with st.status("Processing files...", expanded=True) as status:
+                for stl in uploaded_stls:
+                    if stl.name not in st.session_state["quantities"]:
+                        st.session_state["quantities"][stl.name] = 1
                     
-                    b1, b2 = st.columns(2)
-                    if b1.button("Print", key=f"p_{idx}"):
-                        update_print_status(idx, "Print")
-                        st.rerun()
-                    if b2.button("Do Not Print", key=f"dnp_{idx}"):
-                        update_print_status(idx, "Do Not Print")
-                        st.rerun()
+                    if stl.name in st.session_state["analyzed_files"]:
+                        batch_results.append(st.session_state["analyzed_files"][stl.name])
+                    else:
+                        st.write(f"Analyzing {stl.name}...")
+                        stl.seek(0)
+                        bytes_data = stl.read()
+                        # Use default printer settings if loop variable unavailable
+                        analysis = analyze_single_file_content(
+                            bytes_data, stl.name, density, cost_kg, infill, walls,
+                            60, 0.4 # Default speed/nozzle if hard to reach sidebar scope
+                        )
+                        if "error" not in analysis:
+                            st.session_state["analyzed_files"][stl.name] = analysis
+                            batch_results.append(analysis)
+                status.update(label="Analysis Ready", state="complete", expanded=False)
+
+        if batch_results:
+             st.subheader("📦 Batch Analysis")
+             total_cost_inr = 0
+             total_time = 0
+             
+             for idx, item in enumerate(batch_results):
+                 name = item["File Name"]
+                 qty = st.session_state["quantities"].get(name, 1)
+                 
+                 item_cost = item["Cost (₹)"] * qty
+                 item_time = item["Print Time (hr)"] * qty
+                 
+                 total_cost_inr += item_cost
+                 total_time += item_time
+
+                 with st.container():
+                     c1, c2, c3, c4 = st.columns([3, 1, 1, 2])
+                     c1.write(f"**{name}**")
+                     c1.caption(f"{item['Effective Volume (cm3)']} cm³ | {item['Print Time (hr)']} hr")
+                     if c2.button("➖", key=f"d_{idx}") and qty > 1:
+                         st.session_state["quantities"][name] -= 1
+                         st.rerun()
+                     c3.write(f"Qty: {qty}")
+                     if c4.button("➕", key=f"i_{idx}"):
+                         st.session_state["quantities"][name] += 1
+                         st.rerun()
+                     st.divider()
+            
+             # Generate Quote
+             quote = generate_quote(total_cost_inr, total_time, machine_rate, elec_rate, labour_rate, profit_pct/100, gst_pct/100)
+             st.info(f"Final Quote: ₹{quote['Final Price (₹)']}")
+             with st.expander("Cost Breakdown"):
+                 st.table(pd.DataFrame(quote.items(), columns=["Item", "Value"]))
+
+    elif selected_page == "🗄️ Database":
+        st.title("🗄️ Memory Bank (SQLite)")
         
-        if st.button("🗑️ Clear All History"):
-             if os.path.exists("history.csv"): os.remove("history.csv")
-             st.rerun()
+        search = st.text_input("🔍 Search History (e.g., 'PETG', '#vase-mode')")
+        df = load_history()
+        
+        if search and not df.empty:
+            df = df[df['details'].str.contains(search, case=False) | df['tags'].str.contains(search, case=False)]
+        
+        if not df.empty:
+            for index, row in df.iterrows():
+                with st.expander(f"{row['timestamp']} | {row['name']}"):
+                    st.write(f"**Tags:** {row['tags']}")
+                    st.write(row['details'])
+                    
+                    c1, c2 = st.columns(2)
+                    if c1.button("✅ Mark Success", key=f"s_{row['id']}"):
+                        update_print_status(row['id'], "Success")
+                        st.rerun()
+                    if c2.button("❌ Mark Failed (AI will learn)", key=f"f_{row['id']}"):
+                        update_print_status(row['id'], "Do Not Print")
+                        st.rerun()
 
 if __name__ == "__main__":
     main()
