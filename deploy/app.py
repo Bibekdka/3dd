@@ -63,78 +63,70 @@ def main():
 
     # --- 1. AI SCRAPER (Renamed) ---
     with tab_web:
-        st.info("Paste a URL to get an AI Analysis using your Failure History.")
-        url = st.text_input("Model URL", placeholder="https://...")
+        st.info("Paste Model URLs (One per line) to get AI Analysis using your Failure History.")
+        urls_input = st.text_area("Model URLs", placeholder="https://...\nhttps://...", height=100)
         
         if st.button("🚀 Run Pre-Flight Check", type="primary"):
             past_failures = get_learning_context()
+            urls = [u.strip() for u in urls_input.split('\n') if "http" in u]
             
-            with st.status("🤖 Companion Working...", expanded=True):
-                st.write("1. 🕵️♂️ Scraping Comments & Makes...")
-                data = scrape_model_page(url)
-                if "error" in data: st.error(data['error']); st.stop()
-                
-                st.write("2. 🧠 Comparing with your Failure History...")
-                
-                # THE COMPANION PROMPT
-                prompt = f"""
-                You are an expert 3D Printing Companion.
-                
-                USER MEMORY (PAST FAILURES):
-                {past_failures}
-                
-                NEW MODEL DATA (SCRAPED):
-                {data['text']}
-                
-                TASK:
-                1. **Pre-Flight Checklist**: Give a bulleted list of 5 settings to change immediately (Infill, Walls, Temp).
-                2. **Red Flags**: What are the common complaints in the comments? (e.g. "Legs snap off").
-                3. **Memory Check**: Does this model trigger any of the user's past failure patterns?
-                4. **Filament Choice**: What specific brand/color looks best in user photos?
-                5. **Verdict**: [GO - EASY] or [CAUTION - HARD].
-                
-                AT THE VERY END, generate 5 hashtags starting with # (e.g. #PLA #Easy).
-                """
-                
-                ai_res = ai_analyze(prompt)
-                
-                # Setup hashtags (Mock extraction or simple find)
-                import re
-                tags = " ".join(re.findall(r"#\w+", ai_res['details']))
-                if not tags: tags = "#3dprinting"
-                
-                st.session_state['res'] = ai_res
-                st.session_state['imgs'] = data['images']
-                st.session_state['url'] = url
-                st.session_state['tags'] = tags
-                
-        # DISPLAY RESULTS
-        if 'res' in st.session_state:
-            res = st.session_state['res']
+            if not urls:
+                st.warning("No valid URLs found.")
+                st.stop()
             
-            # 1. VERDICT BANNER
-            if "GO - EASY" in res['details']:
-                st.markdown('<div class="success-box">✅ <strong>VERDICT: GO</strong> - This model looks safe to print.</div>', unsafe_allow_html=True)
-            elif "CAUTION" in res['details']:
-                st.markdown('<div class="warning-box">⚠️ <strong>VERDICT: CAUTION</strong> - Check the Red Flags below.</div>', unsafe_allow_html=True)
-            
-            # 2. CONTENT
-            c1, c2 = st.columns([2, 1])
-            with c1:
-                st.subheader("📋 Pre-Flight Plan")
-                st.markdown(res['details'])
-                st.info(f"🏷️ **Tags:** {st.session_state['tags']}")
-            
-            with c2:
-                st.subheader("📸 Reality Check")
-                if st.session_state['imgs']:
-                    st.image(st.session_state['imgs'][:3], caption="User Makes")
-                else:
-                    st.warning("No user photos found.")
-                
-                if st.button("💾 Save to Brain"):
-                    add_entry("Web Scrape", st.session_state['url'], res['details'], 0, res['summary'], st.session_state['tags'])
-                    st.success("Saved! I'll remember this strategy.")
+            for i, url in enumerate(urls):
+                with st.expander(f"Analysis {i+1}: {url}", expanded=(i==0)):
+                    with st.status(f"🤖 Analyzing Model {i+1}...", expanded=True):
+                        st.write("1. 🕵️♂️ Scraping Comments & Makes...")
+                        data = scrape_model_page(url)
+                        if "error" in data: 
+                            st.error(data['error'])
+                            continue
+                        
+                        st.write("2. 🧠 Comparing with your Failure History...")
+                        
+                        # THE COMPANION PROMPT
+                        prompt = f"""
+                        You are an expert 3D Printing Companion.
+                        
+                        USER MEMORY (PAST FAILURES):
+                        {past_failures}
+                        
+                        NEW MODEL DATA (SCRAPED):
+                        {data['text']}
+                        
+                        TASK:
+                        1. **Pre-Flight Checklist**: Give a bulleted list of 5 settings to change immediately (Infill, Walls, Temp).
+                        2. **Red Flags**: What are the common complaints in the comments? (e.g. "Legs snap off").
+                        3. **Memory Check**: Does this model trigger any of the user's past failure patterns?
+                        4. **Filament Choice**: What specific brand/color looks best in user photos?
+                        5. **Verdict**: [GO - EASY] or [CAUTION - HARD].
+                        
+                        AT THE VERY END, generate 5 hashtags starting with # (e.g. #PLA #Easy).
+                        """
+                        
+                        ai_res = ai_analyze(prompt)
+                        
+                        import re
+                        tags = " ".join(re.findall(r"#\w+", ai_res['details']))
+                        if not tags: tags = "#3dprinting"
+                        
+                        # DISPLAY IN EXPANDER
+                        if "GO - EASY" in ai_res['details']:
+                            st.markdown('<div class="success-box">✅ <strong>VERDICT: GO</strong></div>', unsafe_allow_html=True)
+                        elif "CAUTION" in ai_res['details']:
+                            st.markdown('<div class="warning-box">⚠️ <strong>VERDICT: CAUTION</strong></div>', unsafe_allow_html=True)
+                            
+                        c1, c2 = st.columns([2, 1])
+                        with c1:
+                            st.subheader("📋 Plan")
+                            st.markdown(ai_res['details'])
+                            st.info(f"🏷️ **Tags:** {tags}")
+                        with c2:
+                            if data['images']: st.image(data['images'][:2], caption="Makes")
+                            if st.button("💾 Save", key=f"save_{i}"):
+                                add_entry("Web Scrape", url, ai_res['details'], 0, ai_res['summary'], tags)
+                                st.success("Saved!")
 
     # --- 2. LOCAL SAFETY CHECK (Geometry + AI) ---
     with tab_local:
@@ -180,19 +172,28 @@ def main():
             gst_rate = rc4.number_input("GST %", value=18.0) / 100
             delivery = rc5.number_input("Delivery/Packaging (₹)", value=0.0)
 
-        uploaded_calc = st.file_uploader("Upload STL for Quote", type=['stl'])
+        uploaded_files = st.file_uploader("Upload STL(s) for Quote", type=['stl'], accept_multiple_files=True)
         
-        if uploaded_calc:
-            # Analyze
-            bytes_data = uploaded_calc.getvalue()
-            # Defaults for calcs (Infill=20, Walls=3)
-            stats = analyze_single_file_content(bytes_data, uploaded_calc.name, 1.24, mat_cost, 20, 3, speed, 0.4)
+        if uploaded_files:
+            file_stats = []
+            total_cost = 0
+            total_time = 0
             
-            if "error" not in stats:
-                # Generate Quote
+            for up_file in uploaded_files:
+                bytes_data = up_file.getvalue()
+                stats = analyze_single_file_content(bytes_data, up_file.name, 1.24, mat_cost, 20, 3, speed, 0.4)
+                if "error" not in stats:
+                    file_stats.append(stats)
+                    total_cost += stats['Cost (₹)']
+                    total_time += stats['Print Time (hr)']
+                else:
+                    st.error(f"Error analyzing {up_file.name}: {stats['error']}")
+
+            if file_stats:
+                # Generate Project Quote
                 q = generate_quote(
-                    stats['Cost (₹)'], 
-                    stats['Print Time (hr)'], 
+                    total_cost, 
+                    total_time, 
                     mach_rate, 
                     elec_rate, 
                     labor_rate, 
@@ -201,23 +202,24 @@ def main():
                     delivery
                 )
                 
-                # Display
+                # Display Results
+                st.write("---")
                 colA, colB = st.columns(2)
                 with colA:
-                    st.metric("Final Price", f"₹{q['Final Price (₹)']}")
-                    st.write("---")
-                    st.caption("Analysis:")
-                    st.write(stats)
+                    st.header(f"Total: ₹{q['Final Price (₹)']}")
+                    st.caption(f"Project Quote for {len(file_stats)} parts")
+                    st.dataframe(pd.DataFrame(file_stats))
+                
                 with colB:
-                    st.caption("Breakdown:")
+                    st.subheader("B.O.M & Quote")
                     st.json(q)
                 
                 # PDF
-                if st.button("📄 Download PDF Report"):
-                    pdf = export_pdf_report({"Analysis": stats, "Quote": q})
-                    st.download_button("Download Now", pdf, "quote.pdf", "application/pdf")
-            else:
-                st.error(stats['error'])
+                if st.button("📄 Download Project Report"):
+                    # Create summary dict
+                    summary_data = {"Project Breakdown": file_stats, "Total Quote": q}
+                    pdf = export_pdf_report(summary_data)
+                    st.download_button("Download Quote PDF", pdf, "project_quote.pdf", "application/pdf")
 
     # --- 4. BULK LEARN (Study Mode) ---
     with tab_bulk:
