@@ -113,28 +113,61 @@ def scrape_model_page(url, debug=False):
             # Wait for page to settle
             page.wait_for_timeout(5000)
 
-            # Scroll to trigger lazy loading
-            for _ in range(5):
-                page.mouse.wheel(0, 2000)
-                time.sleep(0.5)
+            # --- INTERACTION LOGIC ---
+            
+            def slow_scroll_to_bottom(page):
+                """Slowly scroll to bottom to trigger lazy loading."""
+                last_height = page.evaluate("document.body.scrollHeight")
+                for _ in range(10): # Try 10 scrolls
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
+                    page.wait_for_timeout(1000) # Wait for load
+                    new_height = page.evaluate("document.body.scrollHeight")
+                    if new_height == last_height:
+                        break # Reached bottom
+                    last_height = new_height
+                    
+                # Scroll back up a bit just in case
+                page.mouse.wheel(0, -1000)
+                page.wait_for_timeout(500)
 
-            # --- DOMAIN-SPECIFIC ACTIONS ---
-            if domain == "printables.com":
-                try:
-                    # Try to click comments to load them
-                    page.get_by_text("Comments").click(timeout=2000)
-                except:
-                    pass
+            def expand_comments(page):
+                """Try to click 'Comments', 'Reviews', or 'User Uploads' tabs."""
+                targets = ["Comments", "Reviews", "Makes", "User Uploads"]
+                for t in targets:
+                    try:
+                        # Case insensitive text match
+                        # This is aggressive but safe in a try-except
+                        cnt = page.get_by_text(t, exact=False).count()
+                        if cnt > 0:
+                            logs.append(f"Found '{t}' tab/button. Clicking...")
+                            page.get_by_text(t, exact=False).first.click(timeout=3000)
+                            page.wait_for_timeout(2000) # Wait for content
+                    except:
+                        pass
+            
+            logs.append("Scrolling to trigger content...")
+            slow_scroll_to_bottom(page)
+            
+            logs.append("Checking for comment tabs...")
+            expand_comments(page)
+            
+            # Additional wait for images
+            page.wait_for_timeout(2000)
 
             # --- DATA EXTRACTION ---
-            text = page.inner_text("body")[:50000]
+            # Extract main text
+            text = page.inner_text("body")[:60000] # Increased limit
+            
+            # Explicitly look for comment containers if body text is partial? 
+            # Usually strict body text is fine if rendered.
 
             images = page.eval_on_selector_all(
                 "img",
                 """
                 imgs => imgs.map(i => i.src).filter(src =>
                     src && src.startsWith("http") &&
-                    !src.includes("icon") && !src.includes("avatar")
+                    !src.includes("icon") && !src.includes("avatar") && 
+                    !src.includes("logo")
                 )
                 """
             )
