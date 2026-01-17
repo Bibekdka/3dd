@@ -20,6 +20,9 @@ def get_connection():
         # 1. Try Streamlit Secrets (Local Testing)
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
+            # Fix: Handle potential newline escape issues in private_key
+            if "private_key" in creds_dict:
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             
         # 2. Try Environment Variables (Render / Cloud Deployment)
         elif "gcp_service_account" in os.environ:
