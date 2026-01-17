@@ -1,279 +1,169 @@
+
 import asyncio
 import sys
 import streamlit as st
+import io
 import pandas as pd
+import requests
 import time
 import os
-import io
-import re
-from dotenv import load_dotenv
 
+# FIX WINDOWS ASYNC LOOP
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib import colors
+from reportlab.lib.utils import ImageReader
+
 # IMPORTS
-from database import add_entry, load_history, update_print_status, get_learning_context, get_db_stats
+from database import add_entry, load_history, update_print_status, get_learning_context, get_db_stats, check_connection
 from scraper import scrape_model_page
 from ai import ai_analyze, ai_generate_tags
-from app_utils import export_pdf_report, analyze_single_file_content, slicer_volume_adjustment, estimate_print_time, generate_quote
 
-load_dotenv()
-st.set_page_config(page_title="AI Print Companion", page_icon="🤖", layout="wide")
-
-# CSS
-st.markdown("""
-<style>
-    .stButton>button { width: 100%; }
-    .success-box { padding: 10px; background-color: #d4edda; border-radius: 5px; color: #155724; }
-    .warning-box { padding: 10px; background-color: #fff3cd; border-radius: 5px; color: #856404; }
-</style>
-""", unsafe_allow_html=True)
+# --- CONFIGURATION & HELPERS ---
+from app_utils import export_pdf_report, analyze_single_file_content, generate_quote 
 
 PRINTER_PROFILES = {
-    "Generic": {"speed": 60, "nozzle": 0.4},
-    "Ender 3 / V2": {"speed": 50, "nozzle": 0.4},
-    "Bambu P1/X1": {"speed": 120, "nozzle": 0.4},
-    "Prusa MK3/4": {"speed": 70, "nozzle": 0.4}
+    "Ender 3 / Ender 3 V2": {"max_speed_mm_s": 50, "nozzle_mm": 0.4},
+    "Bambu Lab X1 / P1": {"max_speed_mm_s": 120, "nozzle_mm": 0.4},
+    "Prusa MK3 / MK4": {"max_speed_mm_s": 70, "nozzle_mm": 0.4}
 }
 
-# --- PAGE FUNCTIONS ---
-
-def render_scraper():
-    st.header("🌐 AI Web Scraper")
-    st.info("Paste Model URLs (One per line)")
-    urls_input = st.text_area("Model URLs", placeholder="https://...", height=100)
-    
-    if st.button("🚀 Analyze Batch", type="primary"):
-        urls = [u.strip() for u in urls_input.split('\n') if "http" in u]
-        for i, url in enumerate(urls):
-            with st.expander(f"Analysis {i+1}: {url}", expanded=(i==0)):
-                # --- LIVE PROGRESS LOADER ---
-                with st.status("🤖 AI Agent Working...", expanded=True) as status:
-                    
-                    # 1. Scraper Callback
-                    def update_status(msg):
-                        st.write(msg)
-                        time.sleep(0.05)
-                    
-                    data = scrape_model_page(url, status_callback=update_status)
-                    
-                    if "error" in data:
-                        status.update(label="❌ Failed", state="error")
-                        st.error(data['error'])
-                        continue
-
-                    # 2. AI Analysis
-                    st.write("🧠 Analyzing content...")
-                    past_failures = get_learning_context()
-                    prompt = f"Memory: {past_failures}\nNew Data: {data['text']}"
-                    
-                    # 3. Multimodal Analysis
-                    # Extract images for the AI to see
-                    image_urls = data.get('images', [])
-                    st.write(f"👁️ analyzing {len(image_urls)} images + text...")
-                    
-                    # Call new function (defined in ai.py, but we import it as ai_analyze alias or change import)
-                    # NOTE: We need to update import to use `ai_analyze_multimodal`
-                    from ai import ai_analyze_multimodal
-                    ai_res = ai_analyze_multimodal(prompt, image_urls)
-                    
-                    # Store Results
-                    st.session_state[f'res_{i}'] = ai_res
-                    st.session_state[f'data_{i}'] = data
-                    
-                    status.update(label="✅ Analysis Complete!", state="complete", expanded=False)
-
-                # Display Results (Outside Status)
-                if f'res_{i}' in st.session_state:
-                    ai_res = st.session_state[f'res_{i}']
-                    data = st.session_state[f'data_{i}']
-                    
-                    # Verdict Banner
-                    v = ai_res.get('verdict', 'UNKNOWN')
-                    if v == "GO":
-                        st.success(f"✅ VERDICT: GO (Risk: {ai_res.get('risk_level', 'Low')})")
-                    else:
-                        st.error(f"🛑 VERDICT: STOP (Risk: {ai_res.get('risk_level', 'High')})")
-                    
-                    c1, c2 = st.columns([2, 1])
-                    with c1:
-                        st.subheader("📝 Summary")
-                        st.write(ai_res.get('summary', 'No summary'))
-                        
-                        st.subheader("⚠️ Warnings")
-                        for w in ai_res.get('warnings', []): st.warning(w)
-
-                        st.subheader("🔧 Settings")
-                        for s in ai_res.get('settings', []): st.write(f"- {s}")
-                        
-                        tags = " ".join(ai_res.get('tags', []))
-                        st.caption(f"Tags: {tags}")
-                        
-                    with c2:
-                        if data['images']: st.image(data['images'][:2], caption="Makes")
-                        
-                        # Save
-                        if st.button("💾 Save", key=f"s_{i}"):
-                            details = f"Summary: {ai_res.get('summary')}\nWarnings: {ai_res.get('warnings')}\nSettings: {ai_res.get('settings')}"
-                            add_entry("Web Scrape", url, details, 0, ai_res.get('summary'), tags)
-                            st.success("Saved!")
-
-def render_calculator(current_printer):
-    st.header("🚀 Smart Quote Calculator")
-    
-    # SLIDERS (Light)
-    c1, c2, c3, c4 = st.columns(4)
-    infill = c1.slider("Infill %", 0, 100, 20)
-    walls = c2.slider("Walls %", 0, 10, 3)
-    cost_kg = c3.number_input("Cost/kg", value=1200)
-    profit_pct = c4.slider("Profit %", 0, 200, 50)
-    
-    with st.expander("⚙️ Advanced Rates (GST, Labor, Delivery)"):
-        rc1, rc2, rc3 = st.columns(3)
-        elec_rate = rc1.number_input("Electricity (₹/hr)", 12.0)
-        labor_rate = rc2.number_input("Labor (₹/hr)", 50.0)
-        mach_rate = rc3.number_input("Machine (₹/hr)", 30.0)
-        rc4, rc5 = st.columns(2)
-        gst_rate = rc4.number_input("GST %", 18.0) / 100
-        del_cost = rc5.number_input("Delivery (₹)", 0.0)
-
-    # UPLOAD (Heavy)
-    uploaded_files = st.file_uploader("Upload STLs", type=['stl'], accept_multiple_files=True)
-    
-    # Helper for Caching
-    @st.cache_data(show_spinner="Analyzing Mesh...", ttl=3600)
-    def cached_analysis(file_bytes, file_name):
-        return analyze_single_file_content(file_bytes, file_name)
-
-    if uploaded_files:
-        project_stats = []
-        total_cost = 0
-        total_time = 0
-        
-        for up_file in uploaded_files:
-            # 1. HEAVY: Analyze Geometry (Cached)
-            try:
-                geo = cached_analysis(up_file.getvalue(), up_file.name)
-            except Exception as e:
-                st.error(f"Failed to analyze {up_file.name}: {e}")
-                continue
-            
-            if "error" in geo: st.error(f"{up_file.name}: {geo['error']}"); continue
-            
-            # 2. LIGHT: Calculate using Sliders
-            raw_vol = geo["Raw Volume (cm3)"]
-            eff_vol = slicer_volume_adjustment(raw_vol, infill, walls)
-            weight = eff_vol * 1.24 # PLA density
-            mat_cost_part = (weight / 1000) * cost_kg
-            time_hr = estimate_print_time(eff_vol, 0.2, current_printer["speed"], current_printer["nozzle"])
-            
-            # Per Part Quote
-            part_cost = mat_cost_part + (time_hr * mach_rate) + (time_hr * elec_rate) + (time_hr * labor_rate)
-            part_price = (part_cost * (1 + profit_pct/100)) * (1 + gst_rate)
-            
-            project_stats.append({
-                "File": up_file.name,
-                "Weight": f"{weight:.1f}g",
-                "Time": f"{time_hr:.2f}h",
-                "Mat Cost": f"₹{mat_cost_part:.2f}",
-                "Raw Vol": raw_vol
-            })
-            total_cost += mat_cost_part
-            total_time += time_hr
-        
-        # Project Totals
-        q = generate_quote(total_cost, total_time, mach_rate, elec_rate, labor_rate, profit_pct/100, gst_rate, del_cost)
-        
-        st.divider()
-        cA, cB = st.columns(2)
-        with cA:
-            st.metric("Project Total", f"₹{q['Final Price (₹)']}")
-            st.dataframe(pd.DataFrame(project_stats))
-        with cB:
-            st.json(q)
-        
-        if st.button("📄 PDF Report"):
-            pdf = export_pdf_report({"Parts": project_stats, "Quote": q})
-            st.download_button("Download Quote", pdf, "quote.pdf", "application/pdf")
-
-def render_geometry():
-    st.header("🛡️ Geometry Safety Check")
-    uploaded = st.file_uploader("Safety Check STL", key="safety_up")
-    if uploaded and st.button("Check Safety"):
-        mem = get_learning_context()
-        prompt = f"User Past Failures: {mem}. File: {uploaded.name} ({uploaded.size/1e6:.1f}MB)."
-        res = ai_analyze(prompt)
-        # Adapt structured output to string for display
-        display_text = f"**Verdict**: {res.get('verdict')}\n\n**Risk**: {res.get('risk_level')}\n\n**Analysis**: {res.get('summary')}\n\n**Warnings**: {res.get('warnings')}"
-        st.markdown(display_text)
-
-def render_bulk():
-    st.header("📚 Bulk Knowledge Ingestion")
-    links_txt = st.text_area("Bulk Links")
-    if st.button("Ingest All"):
-        urls = [l for l in links_txt.split('\n') if "http" in l]
-        prog = st.progress(0)
-        for i, u in enumerate(urls):
-            d = scrape_model_page(u)
-            if "error" not in d:
-                r = ai_analyze(f"Context: {d['text'][:2000]}")
-                # Flat details for DB
-                flat_det = f"{r.get('summary')} | {r.get('verdict')}"
-                tags = " ".join(r.get('tags', []))
-                add_entry("Bulk", u, flat_det, 0, "Bulk", tags)
-            prog.progress((i+1)/len(urls))
-        st.success("Done!")
-
-def render_history():
-    st.header("🗄️ Project History")
-    df = load_history()
-    q = st.text_input("Filter History")
-    if q and not df.empty: df = df[df['details'].str.contains(q, case=False)]
-    
-    st.dataframe(df)
-    with st.expander("Edit Status"):
-        rid = st.number_input("ID", min_value=0)
-        if st.button("Mark Success"): update_print_status(rid, "Success")
-        if st.button("Mark Fail"): update_print_status(rid, "Do Not Print")
-
 def main():
-    # --- SIDEBAR NAV ---
+    st.set_page_config(page_title="3D Deep Dive Pro", page_icon="🧠", layout="wide")
+    
+    # --- SESSION STATE INIT ---
+    if "printers" not in st.session_state: st.session_state["printers"] = PRINTER_PROFILES.copy()
+
+    # --- SIDEBAR MENU (Fixed Visibility) ---
     with st.sidebar:
         st.title("🧠 3D Brain")
         
-        # NAV MENU
-        page = st.radio("Navigation", ["AI Scraper", "Calculator", "Geometry Check", "Bulk Internalize", "History"])
+        # 1. CONNECTION STATUS INDICATOR
+        if check_connection():
+            st.success("🟢 Memory Online (G-Sheets)")
+        else:
+            st.error("🔴 Memory Offline (Check Secrets)")
+            
+        # 2. DASHBOARD (Moved out of Expander for Visibility)
+        st.subheader("📊 Live Stats")
+        stats = get_db_stats()
+        c1, c2 = st.columns(2)
+        c1.metric("Memories", f"{stats['total']}")
+        c2.metric("Success", f"{stats['success_rate']}%")
         
+        if stats['top_tags']:
+            st.caption("Top Failure Tags:")
+            st.bar_chart(pd.DataFrame(stats['top_tags'], columns=["Tag", "Cnt"]).set_index("Tag"))
+            
+        # 3. AI COACH BUTTON
         st.divider()
-        printer_name = st.selectbox("Printer Profile", list(PRINTER_PROFILES.keys()))
-        current_printer = PRINTER_PROFILES[printer_name]
-        
-        st.divider()
-        if os.getenv("GEMINI_API_KEY"): st.success("AI Online")
-        else: st.error("AI Key Missing")
-        
-        with st.expander("📊 Stats", expanded=False):
-            stats = get_db_stats()
-            st.metric("Memories", stats['total'])
-            st.metric("Success %", f"{stats['success_rate']}%")
-        
-        # COACH
         if st.button("🎓 Coach Me"):
             with st.spinner("Analyzing history..."):
-                ctx = get_learning_context()
-                advice = ai_analyze(f"Based on failures: {ctx}, give 3 tips.")
-                # Structured Output Handling
-                if advice.get('verdict') == "ERROR":
-                     st.error(advice.get('summary'))
-                else:
-                     st.info(f"**Advice**: {advice.get('summary')}\n\n**Actionable Tips**: {advice.get('settings')}")
+                history_text = get_learning_context()
+                advice = ai_analyze(f"Based on history: {history_text}. Give 3 printing tips.")
+                st.info(advice.get('details', advice.get('summary', 'No advice generated.')))
 
-    # --- MAIN CONTENT ---
-    if page == "AI Scraper": render_scraper()
-    elif page == "Calculator": render_calculator(current_printer)
-    elif page == "Geometry Check": render_geometry()
-    elif page == "Bulk Internalize": render_bulk()
-    elif page == "History": render_history()
+        st.divider()
+        # Printer Config
+        printer_name = st.selectbox("Printer", list(st.session_state["printers"].keys()))
+        debug_mode = st.checkbox("Debug Mode")
+
+    # --- CORE TABS (Preserved) ---
+    tab_scrape, tab_local, tab_learn = st.tabs(["🕵️ Web Analyst", "💻 Local Estimator", "📚 Bulk Learning"])
+
+    # --- TAB 1: WEB ANALYST ---
+    with tab_scrape:
+        st.header("🕵️ Web Forensic Analysis")
+        url = st.text_input("Model URL")
+        
+        if st.button("🚀 Analyze", type="primary"):
+            past_lessons = get_learning_context()
+            
+            with st.status("🤖 AI Agent Working...", expanded=True) as status:
+                st.write("🔌 Connecting to Scraper...")
+                
+                # --- INJECTED FIX: Scraper Callback for Live Progress ---
+                def update_status(msg):
+                    st.write(msg)
+                    time.sleep(0.05)
+                
+                # Pass callback to scraper
+                data = scrape_model_page(url, status_callback=update_status)
+                
+                if "error" in data:
+                    status.update(label="❌ Failed", state="error")
+                    st.error(data["error"])
+                    st.stop()
+                
+                st.write("🧠 Reading context...")
+                prompt = f"""
+                Analyze this model.
+                MEMORY: {past_lessons}
+                DATA: {data['text']}
+                TASK: Verdict? Warn based on memory.
+                """
+                
+                # Use Multimodal if available (Image Analysis)
+                image_urls = data.get('images', [])
+                try:
+                    from ai import ai_analyze_multimodal
+                    st.write(f"👁️ Visual Analysis on {len(image_urls)} images...")
+                    ai_result = ai_analyze_multimodal(prompt, image_urls)
+                except ImportError:
+                     ai_result = ai_analyze(prompt)
+
+                tags = ai_generate_tags(ai_result.get('details', ''))
+                
+                st.session_state['web_res'] = ai_result
+                st.session_state['web_tags'] = tags
+                st.session_state['web_url'] = url
+                
+                status.update(label="✅ Analysis Complete!", state="complete", expanded=False)
+                
+        if 'web_res' in st.session_state:
+            res = st.session_state['web_res']
+            st.markdown(res.get('details', res.get('summary')))
+            st.info(f"Tags: {st.session_state.get('web_tags')}")
+            if st.button("💾 Save to Brain"):
+                if add_entry("Web Scrape", st.session_state['web_url'], res.get('details'), 0, res.get('summary'), st.session_state.get('web_tags')):
+                    st.success("Saved!")
+                else:
+                    st.error("Failed to save to Google Sheet. Check permissions.")
+
+    # --- TAB 2: LOCAL ESTIMATOR ---
+    with tab_local:
+        st.header("💻 Local File Estimator")
+        uploaded = st.file_uploader("Upload STL", type=["stl"], accept_multiple_files=True)
+        if uploaded:
+            for stl in uploaded:
+                stl.seek(0); bytes_data = stl.read()
+                stats = analyze_single_file_content(bytes_data, stl.name, 1.24, 2000, 20, 3, 60, 0.4)
+                if "error" not in stats:
+                    st.write(f"**{stl.name}** | Cost: ₹{stats['Cost (₹)']}")
+                    if st.button("🧠 AI Check", key=f"ai_{stl.name}"):
+                        mem = get_learning_context()
+                        res = ai_analyze(f"Check safety for {stl.name} ({stats['Effective Volume (cm3)']}cm3). History: {mem}")
+                        st.info(res.get('details', res.get('summary')))
+                st.divider()
+
+    # --- TAB 3: BULK LEARNING ---
+    with tab_learn:
+        st.header("📚 Bulk Ingestion")
+        raw_links = st.text_area("Paste Links (One per line)")
+        if st.button("🚀 Process All"):
+            links = [l.strip() for l in raw_links.split('\n') if "http" in l]
+            prog = st.progress(0)
+            for i, link in enumerate(links):
+                data = scrape_model_page(link)
+                if "error" not in data:
+                    res = ai_analyze(f"Summarize: {data['text'][:2000]}")
+                    tags = ai_generate_tags(res.get('details', ''))
+                    add_entry("Bulk", link, res.get('details'), 0, res.get('summary'), tags)
+                prog.progress((i + 1) / len(links))
+            st.success("Batch Complete!")
 
 if __name__ == "__main__":
     main()
