@@ -89,10 +89,16 @@ def main():
                 3. **Memory Check**: Does this model trigger any of the user's past failure patterns?
                 4. **Filament Choice**: What specific brand/color looks best in user photos?
                 5. **Verdict**: [GO - EASY] or [CAUTION - HARD].
+                
+                AT THE VERY END, generate 5 hashtags starting with # (e.g. #PLA #Easy).
                 """
                 
                 ai_res = ai_analyze(prompt)
-                tags = ai_generate_tags(ai_res['details'])
+                
+                # Setup hashtags (Mock extraction or simple find)
+                import re
+                tags = " ".join(re.findall(r"#\w+", ai_res['details']))
+                if not tags: tags = "#3dprinting"
                 
                 st.session_state['res'] = ai_res
                 st.session_state['imgs'] = data['images']

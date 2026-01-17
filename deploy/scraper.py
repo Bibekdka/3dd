@@ -10,7 +10,7 @@ def install_playwright_if_needed():
             subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
         except: pass
 
-@st.cache_resource(ttl=3600) # Add TTL (Time To Live) to restart browser every hour
+@st.cache_resource(ttl=3600)
 def get_browser():
     try:
         install_playwright_if_needed()
