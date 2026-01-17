@@ -196,6 +196,30 @@ def main():
         st.subheader("🖨️ Printer Profile")
         printer_name = st.sidebar.selectbox("Select Printer", list(PRINTER_PROFILES.keys()))
         printer = PRINTER_PROFILES[printer_name]
+        
+        # --- PRINT QUEUE SECTION ---
+        st.divider()
+        st.subheader("📋 Print Queue")
+        queue_df = load_history()
+        if not queue_df.empty and "PrintStatus" in queue_df.columns:
+            # Filter for items marked as "Print"
+            print_items = queue_df[queue_df["PrintStatus"] == "Print"]
+            
+            if not print_items.empty:
+                # Calculate totals
+                total_q_cost = print_items["Cost_INR"].sum()
+                st.caption(f"Total: ₹{total_q_cost:,.0f} | {len(print_items)} Items")
+                
+                for _, row in print_items.iterrows():
+                    with st.expander(f"📌 {row['Name']}", expanded=False):
+                        st.markdown(f"**Details:** {row['Details']}")
+                        if row.get("Cost_INR", 0) > 0:
+                            st.markdown(f"**Cost:** ₹{row['Cost_INR']:.2f}")
+                        if row.get("Type") == "Link Scraper":
+                             st.markdown(f"[View Source]({row['Name']})")
+            else:
+                st.info("Queue empty. Mark items as 'Print' in History.")
+
 
     st.markdown("Upload STL files to calculate volume and estimate effective cost/weight.")
 
@@ -331,10 +355,22 @@ def main():
         total_items = sum(st.session_state["quantities"].values())
         if st.session_state.get("last_batch_len") != total_items:
              st.session_state["last_batch_len"] = total_items
+             
+             # Smart Naming Logic
+             if len(batch_results) == 1:
+                 entry_name = batch_results[0]["File Name"]
+             else:
+                 # If multiple files, list first few names or generic batch
+                 names = [b["File Name"] for b in batch_results]
+                 if len(names) <= 3:
+                     entry_name = ", ".join(names)
+                 else:
+                     entry_name = f"Batch: {len(names)} files"
+
              add_history_entry(
-                 entry_type="Batch Analysis",
-                 name=f"{total_items} items ({len(batch_results)} files)",
-                 details=f"Cost: ₹{total_cost_inr:.0f}, Weight: {total_weight:.1f}g",
+                 entry_type="Estimation", # Changed from Batch Analysis to be cleaner
+                 name=entry_name,
+                 details=f"Cost: ₹{total_cost_inr:.0f} | Weight: {total_weight:.1f}g | Time: {total_time:.1f}hr",
                  cost=total_cost_inr
              )
 
