@@ -85,24 +85,30 @@ def estimate_print_time(effective_volume_cm3, layer_height=0.2, printer_speed_mm
     if extrusion_rate == 0: return 0
     return round((total_mm3 / extrusion_rate) / 3600, 2)
 
-def analyze_single_file_content(file_content, file_name):
-    """
-    HEAVY FUNCTION: Runs only once per file.
-    Calculates raw geometry only.
-    """
+def analyze_single_file_content(file_content, file_name, density=1.24, cost_per_kg=2000, infill=20, walls=3, speed_mm_s=60, nozzle_mm=0.4):
     try:
-        # Load from RAM directly
+        # OPTIMIZATION: Load from RAM (BytesIO) instead of saving to Disk
         file_obj = io.BytesIO(file_content)
-        mesh = trimesh.load(file_obj, file_type='stl', force="mesh")
         
+        # Load directly
+        mesh = trimesh.load(file_obj, file_type='stl', force="mesh")
+
         if mesh.is_empty: raise ValueError("Empty mesh")
         
         volume_cm3 = mesh.volume / 1000.0
         
+        # Calculate derived stats
+        effective_vol = slicer_volume_adjustment(volume_cm3, infill, walls)
+        weight_g = effective_vol * density
+        cost = (weight_g / 1000) * cost_per_kg
+        time_hr = estimate_print_time(effective_vol, 0.2, speed_mm_s, nozzle_mm)
+        
         return {
             "File Name": file_name,
-            "Raw Volume (cm3)": round(volume_cm3, 2),
-            "Vertices": len(mesh.vertices)
+            "Effective Volume (cm3)": round(effective_vol, 2),
+            "Weight (g)": round(weight_g, 2),
+            "Cost (₹)": round(cost, 2),
+            "Print Time (hr)": time_hr
         }
     except Exception as e:
         return {"error": str(e), "File Name": file_name}

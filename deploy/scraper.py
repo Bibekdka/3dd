@@ -37,6 +37,7 @@ def scrape_model_page(url, status_callback=None):
         report("🚀 Launching Browser...")
         
         # CRITICAL FIX: No Caching. Launch fresh browser for every request to avoid Threading Error.
+        # CONTEXT MANAGER: Launches and Closes browser safely in the CURRENT thread.
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True, # Always headless on server
