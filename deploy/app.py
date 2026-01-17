@@ -14,6 +14,8 @@ if not os.path.exists(".streamlit/secrets.toml") and "gcp_service_account" not i
 from database import add_entry, load_history, update_print_status, get_learning_context, get_db_stats
 from scraper import scrape_model_page
 from ai import ai_analyze, ai_generate_tags
+from app_utils import analyze_single_file_content, generate_quote, export_pdf_report
+import io
 
 load_dotenv()
 st.set_page_config(page_title="AI Print Companion", page_icon="🤖", layout="wide")
@@ -57,11 +59,12 @@ def main():
     st.title("🛡️ 3D Print Pre-Flight Center")
     st.markdown("I analyze models, check your history, and tell you *exactly* how to print them.")
 
-    tab_web, tab_local, tab_bulk, tab_db = st.tabs(["🌐 Web Scout", "📂 Local Check", "📚 Bulk Learn", "🗄️ History"])
+    tab_web, tab_local, tab_calc, tab_bulk, tab_db = st.tabs(["🕵️ AI Scraper", "🛡️ Safety Check", "🚀 Calculator", "📚 Bulk Learn", "🗄️ History"])
 
-    # --- 1. WEB SCOUT (The Link Analyzer) ---
+    # --- 1. AI SCRAPER (Renamed) ---
     with tab_web:
-        url = st.text_input("Paste Model URL (MakerWorld, Printables, etc.)", placeholder="https://...")
+        st.info("Paste a URL to get an AI Analysis using your Failure History.")
+        url = st.text_input("Model URL", placeholder="https://...")
         
         if st.button("🚀 Run Pre-Flight Check", type="primary"):
             past_failures = get_learning_context()
@@ -133,13 +136,12 @@ def main():
                     add_entry("Web Scrape", st.session_state['url'], res['details'], 0, res['summary'], st.session_state['tags'])
                     st.success("Saved! I'll remember this strategy.")
 
-    # --- 2. LOCAL CHECK (STL Upload) ---
+    # --- 2. LOCAL SAFETY CHECK (Geometry + AI) ---
     with tab_local:
-        st.info("Upload an STL. I'll check its geometry against your past failure patterns.")
-        uploaded = st.file_uploader("Upload STL", accept_multiple_files=False)
+        st.info("Upload an STL to check if its GEOMETRY matches your past failures (e.g. warping, thin walls).")
+        uploaded = st.file_uploader("Upload STL for Safety Check", accept_multiple_files=False)
         
         if uploaded and st.button("🧠 Check Geometry"):
-            # Mock geometry check (would use trimesh in full app)
             f_size = uploaded.size / 1024 / 1024 # MB
             memory = get_learning_context()
             
@@ -157,7 +159,43 @@ def main():
             advice = ai_analyze(prompt)
             st.markdown(advice['details'])
 
-    # --- 3. BULK LEARN (Study Mode) ---
+    # --- 3. COST CALCULATOR (Restored) ---
+    with tab_calc:
+        st.subheader("💰 Smart Quote Calculator")
+        
+        c1, c2, c3 = st.columns(3)
+        mat_cost = c1.number_input("Material Cost (₹/kg)", value=1200)
+        speed = c2.number_input("Speed (mm/s)", value=60)
+        profit = c3.slider("Profit Margin %", 0, 200, 50)
+        
+        uploaded_calc = st.file_uploader("Upload STL for Quote", type=['stl'])
+        
+        if uploaded_calc:
+            # Analyze
+            bytes_data = uploaded_calc.getvalue()
+            # Defaults for calcs
+            stats = analyze_single_file_content(bytes_data, uploaded_calc.name, 1.24, mat_cost, 20, 3, speed, 0.4)
+            
+            if "error" not in stats:
+                # Generate Quote
+                q = generate_quote(stats['Cost (₹)'], stats['Print Time (hr)'], 50, 10, 50, profit/100, 0.18)
+                
+                # Display
+                colA, colB = st.columns(2)
+                with colA:
+                    st.metric("Final Price", f"₹{q['Final Price (₹)']}")
+                    st.write(stats)
+                with colB:
+                    st.json(q)
+                
+                # PDF
+                if st.button("📄 Download PDF Report"):
+                    pdf = export_pdf_report({"Analysis": stats, "Quote": q})
+                    st.download_button("Download Now", pdf, "quote.pdf", "application/pdf")
+            else:
+                st.error(stats['error'])
+
+    # --- 4. BULK LEARN (Study Mode) ---
     with tab_bulk:
         st.header("📚 Bulk Ingestion")
         st.write("Paste a list of links. I will study them all and update my database.")
@@ -177,7 +215,7 @@ def main():
             
             st.success(f"✅ Learned from {len(urls)} models!")
 
-    # --- 4. HISTORY ---
+    # --- 5. HISTORY ---
     with tab_db:
         st.subheader("🗄️ Memory Bank")
         df = load_history()
