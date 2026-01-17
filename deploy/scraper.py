@@ -10,13 +10,19 @@ def install_playwright_if_needed():
             subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
         except: pass
 
-@st.cache_resource
+@st.cache_resource(ttl=3600) # Add TTL (Time To Live) to restart browser every hour
 def get_browser():
-    install_playwright_if_needed()
-    playwright = sync_playwright().start()
-    # HEADLESS = False on Windows so you can see/solve Captchas if needed
-    headless = True if sys.platform != "win32" else False
-    return playwright.chromium.launch(headless=headless, args=["--no-sandbox", "--disable-blink-features=AutomationControlled"])
+    try:
+        install_playwright_if_needed()
+        playwright = sync_playwright().start()
+        browser = playwright.chromium.launch(
+            headless=True if sys.platform != "win32" else False,
+            args=["--no-sandbox", "--disable-dev-shm-usage"] # Added dev-shm-usage for Docker stability
+        )
+        return browser
+    except Exception as e:
+        print(f"Browser Launch Failed: {e}")
+        return None
 
 def scrape_model_page(url):
     logs = []

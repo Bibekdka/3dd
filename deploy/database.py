@@ -10,8 +10,13 @@ SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/au
 
 def get_connection():
     """Authenticates with Google Sheets using Streamlit Secrets."""
-    # Load credentials from Streamlit secrets (we will set this up in Render later)
+    # Load credentials from Streamlit secrets
     try:
+        # Check if secrets are loaded
+        if "gcp_service_account" not in st.secrets:
+            st.error("Missing 'gcp_service_account' in secrets. on Render this should be an Environment Variable/Secret File.")
+            return None
+            
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
         client = gspread.authorize(creds)
@@ -26,6 +31,7 @@ def init_db():
     """Checks if headers exist, if not adds them."""
     try:
         sheet = get_connection()
+        if not sheet: return
         headers = sheet.row_values(1)
         if not headers:
             sheet.append_row([
@@ -38,6 +44,7 @@ def init_db():
 def add_entry(entry_type, name, details, cost=0.0, ai_summary="", tags="", full_json=""):
     try:
         sheet = get_connection()
+        if not sheet: return False
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         # Generate a simple ID based on number of rows
@@ -58,6 +65,8 @@ def load_history():
     """Loads data from Sheet into DataFrame."""
     try:
         sheet = get_connection()
+        if not sheet: return pd.DataFrame(columns=["id", "timestamp", "type", "name", "details", "print_status", "ai_summary", "tags"])
+        
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
         # Sort by ID descending (newest first)
@@ -71,6 +80,7 @@ def update_print_status(row_id, status):
     """Finds the row with matching ID and updates status."""
     try:
         sheet = get_connection()
+        if not sheet: return False
         # Find cell with the ID
         cell = sheet.find(str(row_id))
         # Update the 'print_status' column (Column G, which is index 7)
