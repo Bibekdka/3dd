@@ -20,21 +20,23 @@ def get_connection():
         # 1. Try Streamlit Secrets (Local Testing)
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
-            # Fix: Handle potential newline escape issues in private_key
-            if "private_key" in creds_dict:
-                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             
         # 2. Try Environment Variables (Render / Cloud Deployment)
         elif "gcp_service_account" in os.environ:
             try:
-                creds_dict = json.loads(os.environ["gcp_service_account"])
+                # RAW STRING CLEANUP: Critical for Render
+                json_str = os.environ["gcp_service_account"]
+                creds_dict = json.loads(json_str)
             except json.JSONDecodeError as e:
                 print(f"❌ JSON Error in Env Var: {e}")
                 return None
 
         if not creds_dict:
-            print("❌ No credentials found in secrets.toml or Environment Variables.")
             return None
+
+        # FIX NEWLINES IN PRIVATE KEY (Common Render Bug)
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
 
         # Authorize
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
@@ -85,26 +87,31 @@ def load_history():
         if not df.empty:
             df = df.sort_values(by="id", ascending=False)
         return df
-    except Exception as e:
-        print(f"❌ Load History Error: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 def update_print_status(row_id, status):
     sheet = get_connection()
     if not sheet: return False
     try:
         cell = sheet.find(str(row_id))
-        sheet.update_cell(cell.row, 7, status) # Column 7 is print_status
+        sheet.update_cell(cell.row, 7, status) 
         return True
     except: return False
 
 def get_learning_context():
+    """Retrieves past failures to teach the AI."""
     df = load_history()
-    if df.empty: return "No recorded failures yet."
-    failures = df[(df['print_status'] == 'Do Not Print') | (df['details'].str.contains('fail', case=False, na=False))].head(5)
-    if failures.empty: return "No recent failures."
+    if df.empty: return "No recorded history yet."
     
-    context = "USER'S PAST FAILURES (WARNINGS):\n"
+    # Filter for 'Do Not Print' or failures
+    failures = df[
+        (df['print_status'] == 'Do Not Print') | 
+        (df['print_status'] == 'Fail')
+    ].head(5)
+    
+    if failures.empty: return "No recent failures found in history."
+    
+    context = "USER'S PAST FAILURES (LEARN FROM THESE):\n"
     for _, row in failures.iterrows():
         context += f"- Model: {row['name']} | Issues: {row['ai_summary']} | Tags: {row['tags']}\n"
     return context
