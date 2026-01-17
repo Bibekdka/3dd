@@ -106,16 +106,22 @@ def scrape_model_page(url, debug=False):
                     page.mouse.wheel(0, 4000) 
                     page.wait_for_timeout(1000)
                 
-                # "Load More" Expansion
-                triggers = ["Load more", "Show more", "View all"]
-                for trigger in triggers:
-                    try:
-                        btns = page.get_by_text(trigger, exact=False)
-                        if btns.count() > 0:
-                            logs.append(f"Clicking '{trigger}'...")
-                            btns.first.click(timeout=1000)
-                            page.wait_for_timeout(1500)
-                    except: pass
+                # "Load More" Expansion (Recursive)
+                trigger_words = ["Load more", "Show more", "View all", "See more"]
+                max_clicks = 10 # Safety limit
+                click_count = 0
+                for trigger in trigger_words:
+                    while click_count < max_clicks: # Prevent infinite loops
+                        try:
+                            btns = page.get_by_text(trigger, exact=False)
+                            if btns.count() > 0 and btns.first.is_visible():
+                                logs.append(f"Clicking '{trigger}' ({click_count+1}/{max_clicks})...")
+                                btns.first.click(timeout=1000)
+                                page.wait_for_timeout(2000)
+                                click_count += 1
+                            else:
+                                break
+                        except: break
 
             activate_content()
 
