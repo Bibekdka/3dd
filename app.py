@@ -399,6 +399,29 @@ def main():
             )
 
     # --- LINK PARSER SECTION ---
+import requests # ADDED: For downloading STLs and Images
+
+# ... (keep existing imports) ...
+
+# --- IMPROVEMENT: Caching this function improves performance ---
+@st.cache_data(show_spinner=False)
+def analyze_single_file_content(file_content, file_name, density, cost_per_kg, infill, walls, speed_mm_s, nozzle_mm):
+    # ... (existing logic) ...
+    # (Ensure this function handles 'file_content' as bytes correctly, which it does)
+    pass # Placeholder to indicate no change to internal logic here
+
+def download_file(url):
+    try:
+        response = requests.get(url, stream=True, timeout=30)
+        response.raise_for_status()
+        return io.BytesIO(response.content)
+    except Exception as e:
+        return None
+
+def main():
+    # ... (existing setup) ...
+   
+    # --- LINK PARSER SECTION ---
     st.divider()
     st.header("🔗 Link Parser")
     model_url = st.text_input("Paste 3D Model URL")
@@ -414,30 +437,129 @@ def main():
                 
                 if scraped_data and "error" not in scraped_data:
                     st.success("Scraped!")
-                    # AI Analysis
-                    prompt = f"Analyze: {clean_scraped_text(scraped_data['text'])[:3000]}" # Limit text length
-                    ai_result = ai_analyze(prompt)
                     
-                    add_history_entry("Link Scraper", model_url, f"{len(scraped_data.get('images',[]))} imgs", 0.0, ai_result['summary'], ai_result['details'])
+                    # Store in session state to persist across reruns (for Estimate button)
+                    st.session_state['last_scraped_data'] = scraped_data
+                    st.session_state['last_scraped_url'] = model_url
                     
-                    st.markdown(f"**AI Summary:** {ai_result['summary']}")
-                    st.markdown(ai_result["details"])
-                    
-                    if scraped_data.get("images"):
-                        st.image(scraped_data["images"][:3], width=200) # Show first 3 images
-                    
-                    if scraped_data.get("stl_links"):
-                         st.subheader("📥 STL Downloads")
-                         for link in scraped_data["stl_links"]:
-                             st.markdown(f"- [Download STL]({link})")
-                    
-                    # JSON Download
-                    json_str = json.dumps(scraped_data, indent=2, default=str)
-                    st.download_button("📥 Download JSON", json_str, "scraped_data.json", "application/json")
-                else:
-                    st.error(f"Failed: {scraped_data.get('error', 'Unknown error')}")
-                    if debug_mode and scraped_data.get("debug"):
-                         st.write(scraped_data["debug"])
+    # Display Scraped Data (from Session State to allow interaction)
+    if 'last_scraped_data' in st.session_state:
+        scraped_data = st.session_state['last_scraped_data']
+        
+        # 1. AI Deep Dive
+        if st.checkbox("🧠 Run AI Deep Dive (Settings & Comments)", value=True):
+            prompt = f"""
+            Analyze this 3D model text. 
+            Target: DEEP DIVE into comments and description to find recommended PRINTER SETTINGS.
+            
+            Output Format:
+            1. **Summary**: Brief overview of the model.
+            2. **Printer Settings**: (List found settings like Infill, Walls, Temp, Supports. If none, say "Standard Profile").
+            3. **User Feedback**: Note any common issues mentioned in comments.
+            
+            Text: {clean_scraped_text(scraped_data['text'])[:5000]}
+            """
+            if 'last_ai_result' not in st.session_state or st.session_state.get('last_ai_url') != st.session_state['last_scraped_url']:
+                 with st.spinner("AI Analyzing comments..."):
+                     st.session_state['last_ai_result'] = ai_analyze(prompt)
+                     st.session_state['last_ai_url'] = st.session_state['last_scraped_url']
+            
+            ai_result = st.session_state['last_ai_result']
+            st.markdown(f"**AI Summary:** {ai_result['summary']}")
+            st.markdown(ai_result["details"])
+        
+        # 2. Images
+        images = scraped_data.get("images", [])
+        if images:
+            st.image(images[:3], width=200, caption=[f"Image {i+1}" for i in range(min(3, len(images)))])
+            
+        # 3. STL Links & Estimation
+        stl_links = scraped_data.get("stl_links", [])
+        if stl_links:
+             st.subheader("📥 STL Downloads & Estimation")
+             
+             col_est1, col_est2 = st.columns([3, 1])
+             with col_est1:
+                 st.write(f"Found {len(stl_links)} STL files.")
+                 
+             with col_est2:
+                 # Auto-Estimate First Link
+                 if st.button("📉 Estimate First STL"):
+                     first_link = stl_links[0]
+                     with st.spinner(f"Downloading {first_link.split('/')[-1]}..."):
+                         file_data = download_file(first_link)
+                         if file_data:
+                             # Initialize settings if needed
+                             if "quantities" not in st.session_state: st.session_state["quantities"] = {}
+                             
+                             # Analyze
+                             analysis = analyze_single_file_content(
+                                 file_data.getvalue(), 
+                                 "scraped_model.stl", 
+                                 density, cost_per_kg, infill, walls, 
+                                 printer["max_speed_mm_s"], printer["nozzle_mm"]
+                             )
+                             
+                             if "error" not in analysis:
+                                 st.success("Estimation Complete!")
+                                 st.metric("Cost", f"₹{analysis['Cost (₹)']}")
+                                 st.metric("Time", f"{analysis['Print Time (hr)']} hr")
+                                 st.metric("Weight", f"{analysis['Weight (g)']} g")
+                                 
+                                 # Add to History
+                                 add_history_entry(
+                                     "Link Estimate", 
+                                     st.session_state['last_scraped_url'], 
+                                     f"Est: ₹{analysis['Cost (₹)']}", 
+                                     analysis['Cost (₹)'], 
+                                     st.session_state.get('last_ai_result', {}).get('summary', ""), 
+                                     f"Time: {analysis['Print Time (hr)']}hr"
+                                 )
+                             else:
+                                 st.error(f"Analysis Failed: {analysis['error']}")
+                         else:
+                             st.error("Failed to download STL.")
+
+             for link in stl_links:
+                 st.markdown(f"- [Download]({link})")
+
+        # 4. JSON Download
+        json_str = json.dumps(scraped_data, indent=2, default=str)
+        
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1:
+            st.download_button("📥 Download Scraped JSON", json_str, "scraped_data.json", "application/json")
+        
+        with col_dl2:
+            # Prepare Data for PDF
+            report_lines = []
+            report_lines.append(f"Model: {st.session_state['last_scraped_url']}")
+            report_lines.append(f"Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
+            report_lines.append("-" * 60)
+            report_lines.append("AI DEEP DIVE SUMMARY")
+            report_lines.append("-" * 60)
+            if 'last_ai_result' in st.session_state:
+                report_lines.append(st.session_state['last_ai_result']['summary'])
+                report_lines.append("\nDETAILS & SETTINGS:")
+                report_lines.append(st.session_state['last_ai_result']['details'])
+            
+            # Simple text dump for now to ensure robustness
+            pdf_data = "\n".join(report_lines) 
+            pdf_buffer = export_pdf_report(pdf_data)
+            
+            st.download_button(
+                label="📄 Download Deep Dive PDF",
+                data=pdf_buffer,
+                file_name="deep_dive_report.pdf",
+                mime="application/pdf"
+            )
+
+    # Error Display
+    if 'last_scraped_data' in st.session_state and "error" in st.session_state['last_scraped_data']:
+        st.error(f"Failed: {st.session_state['last_scraped_data']['error']}")
+        if debug_mode and st.session_state['last_scraped_data'].get("debug"):
+             st.write(st.session_state['last_scraped_data']["debug"])
+
 
     # --- HISTORY TAB ---
     with tab_history:
