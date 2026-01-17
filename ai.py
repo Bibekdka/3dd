@@ -22,7 +22,9 @@ def ai_analyze(text: str) -> dict:
         response = model.generate_content(text)
         if not response or not response.text: return fallback
         return {"summary": "AI Analysis", "details": response.text.strip()}
-    except: return fallback
+    except Exception as e:
+        print(f"❌ AI Error: {e}")
+        return fallback
 
 def ai_generate_tags(text_summary: str) -> str:
     """

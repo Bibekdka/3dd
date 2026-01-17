@@ -41,6 +41,13 @@ def main():
     with st.sidebar:
         st.title("🧠 3D Brain")
         
+        # Connection Status
+        from database import check_connection
+        if check_connection():
+            st.success("✅ Brain Online")
+        else:
+            st.error("❌ Brain Disconnected")
+        
         # 1. AI DASHBOARD
         with st.expander("📊 Brain Dashboard", expanded=False):
             stats = get_db_stats()
@@ -76,7 +83,7 @@ def main():
         debug_mode = st.checkbox("Debug Mode")
 
     # --- TABS ---
-    tab_scrape, tab_local, tab_learn = st.tabs(["🕵️ Web Analyst", "💻 Local Estimator", "📚 Bulk Learning"])
+    tab_scrape, tab_local, tab_learn, tab_hist = st.tabs(["🕵️ Web Analyst", "💻 Local Estimator", "📚 Bulk Learning", "📜 History"])
 
     # --- TAB 1: WEB ANALYST (Keep existing logic) ---
     with tab_scrape:
@@ -216,6 +223,41 @@ def main():
             
             status.success(f"✅ Learned from {len(links)} new sources!")
             st.balloons()
+
+    # --- TAB 4: HISTORY (New Feature) ---
+    with tab_hist:
+        st.header("📜 Print Job History")
+        
+        df = load_history()
+        if df.empty:
+            st.info("No history found. Start analyzing prints!")
+        else:
+            # Display stats
+            completed = len(df[df['print_status'] != 'Pending'])
+            st.caption(f"Total Records: {len(df)} | Resolved: {completed}")
+            
+            # Interactive Table
+            for index, row in df.iterrows():
+                with st.expander(f"{row['timestamp']} | {row['name']} ({row['print_status']})"):
+                    c1, c2 = st.columns([3, 1])
+                    with c1:
+                        st.write(f"**Type:** {row['type']}")
+                        st.write(f"**Details:** {row['details']}")
+                        st.write(f"**AI Summary:** {row['ai_summary']}")
+                        st.caption(f"Tags: {row['tags']}")
+                    
+                    with c2:
+                        st.write("### Update Status")
+                        c_s, c_f, c_d = st.columns(3)
+                        if c_s.button("✅ Success", key=f"s_{row['id']}"):
+                            update_print_status(row['id'], "Success")
+                            st.rerun()
+                        if c_f.button("❌ Fail", key=f"f_{row['id']}"):
+                            update_print_status(row['id'], "Fail")
+                            st.rerun()
+                        if c_d.button("🚫 Skip", key=f"d_{row['id']}"):
+                            update_print_status(row['id'], "Do Not Print")
+                            st.rerun()
 
 if __name__ == "__main__":
     main()

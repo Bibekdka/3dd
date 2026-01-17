@@ -85,7 +85,9 @@ def load_history():
         if not df.empty:
             df = df.sort_values(by="id", ascending=False)
         return df
-    except: return pd.DataFrame()
+    except Exception as e:
+        print(f"❌ Load History Error: {e}")
+        return pd.DataFrame()
 
 def update_print_status(row_id, status):
     sheet = get_connection()
