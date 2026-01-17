@@ -15,7 +15,7 @@ if sys.platform == 'win32':
 from database import add_entry, load_history, update_print_status, get_learning_context, get_db_stats
 from scraper import scrape_model_page
 from ai import ai_analyze, ai_generate_tags
-from app_utils import export_pdf_report, analyze_single_file_content, slicer_volume_adjustment, estimate_print_time
+from app_utils import export_pdf_report, analyze_single_file_content, slicer_volume_adjustment, estimate_print_time, generate_quote
 
 load_dotenv()
 st.set_page_config(page_title="AI Print Companion", page_icon="🤖", layout="wide")
@@ -36,22 +36,7 @@ PRINTER_PROFILES = {
     "Prusa MK3/4": {"speed": 70, "nozzle": 0.4}
 }
 
-def generate_quote(material_cost, print_time_hr, machine_rate_per_hr, electricity_per_hr, labour_rate_per_hr, profit_margin, gst, delivery_cost=0):
-    base_cost = material_cost + (print_time_hr * machine_rate_per_hr) + (print_time_hr * electricity_per_hr) + (print_time_hr * labour_rate_per_hr)
-    profit = base_cost * profit_margin
-    subtotal = base_cost + profit
-    gst_amount = subtotal * gst
-    total = subtotal + gst_amount + delivery_cost
-    return {
-        "Material Cost (₹)": round(material_cost, 2),
-        "Machine Cost (₹)": round(print_time_hr * machine_rate_per_hr, 2),
-        "Electricity (₹)": round(print_time_hr * electricity_per_hr, 2),
-        "Labour Cost (₹)": round(print_time_hr * labour_rate_per_hr, 2),
-        "Profit (₹)": round(profit, 2),
-        "GST (₹)": round(gst_amount, 2),
-        "Delivery (₹)": round(delivery_cost, 2),
-        "Final Price (₹)": round(total, 2)
-    }
+
 
 def main():
     with st.sidebar:
