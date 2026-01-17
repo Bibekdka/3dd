@@ -9,23 +9,25 @@ import json
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
 def get_connection():
-    """Authenticates with Google Sheets using Streamlit Secrets."""
-    # Load credentials from Streamlit secrets
-    try:
-        # Check if secrets are loaded
-        if "gcp_service_account" not in st.secrets:
-            st.error("Missing 'gcp_service_account' in secrets. on Render this should be an Environment Variable/Secret File.")
-            return None
-            
+    """Authenticates with Google Sheets using Env Vars (Render) or Secrets (Local)."""
+    
+    # 1. Try loading from Render Environment Variable (JSON String)
+    import os
+    if "gcp_service_account" in os.environ:
+        # We need to parse the JSON string back into a dictionary
+        creds_dict = json.loads(os.environ["gcp_service_account"])
+        
+    # 2. Try loading from local .streamlit/secrets.toml
+    elif "gcp_service_account" in st.secrets:
         creds_dict = dict(st.secrets["gcp_service_account"])
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
-        client = gspread.authorize(creds)
-        # Open the sheet by name. Make sure your sheet is named EXACTLY 'printer_brain'
-        sheet = client.open("printer_brain").sheet1
-        return sheet
-    except Exception as e:
-        st.error(f"Google Sheets Connection Error: {e}. Check your .streamlit/secrets.toml or Render Environment Variables.")
-        raise e
+        
+    else:
+        raise ValueError("❌ GCP Credentials not found! Check Render Environment Variables.")
+
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
+    client = gspread.authorize(creds)
+    sheet = client.open("printer_brain").sheet1
+    return sheet
 
 def init_db():
     """Checks if headers exist, if not adds them."""
