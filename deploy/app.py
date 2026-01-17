@@ -2,7 +2,13 @@ import streamlit as st
 import pandas as pd
 import time
 import os
+import json
 from dotenv import load_dotenv
+
+# Helper to load secrets locally if not on Render
+if not os.path.exists(".streamlit/secrets.toml") and "gcp_service_account" not in st.secrets:
+    # If you are running locally, you might want to mock this or rely on a local .toml file
+    pass 
 
 # Import modules
 from database import add_entry, load_history, update_print_status, get_learning_context, get_db_stats
