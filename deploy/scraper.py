@@ -3,7 +3,7 @@ import sys
 import subprocess
 import os
 import random
-import streamlit as st
+
 from playwright.sync_api import sync_playwright
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 

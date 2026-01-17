@@ -155,14 +155,25 @@ def main():
             total_cost = 0
             total_time = 0
             
+        # Helper for Caching
+        @st.cache_data(show_spinner="Analyzing Mesh...", ttl=3600)
+        def cached_analysis(file_bytes, file_name):
+            return analyze_single_file_content(file_bytes, file_name)
+
+        if uploaded_files:
+            project_stats = []
+            total_cost = 0
+            total_time = 0
+            
             for up_file in uploaded_files:
-                # 1. HEAVY: Analyze Geometry once per file
-                file_key = f"analysis_{up_file.name}-{up_file.size}"
-                if file_key not in st.session_state:
-                    with st.spinner(f"Meshing {up_file.name}..."):
-                        st.session_state[file_key] = analyze_single_file_content(up_file.getvalue(), up_file.name)
+                # 1. HEAVY: Analyze Geometry (Cached)
+                # Reads from RAM (bytes) -> Fast & Cached by Streamlit
+                try:
+                    geo = cached_analysis(up_file.getvalue(), up_file.name)
+                except Exception as e:
+                    st.error(f"Failed to analyze {up_file.name}: {e}")
+                    continue
                 
-                geo = st.session_state[file_key]
                 if "error" in geo: st.error(f"{up_file.name}: {geo['error']}"); continue
                 
                 # 2. LIGHT: Calculate using Sliders
