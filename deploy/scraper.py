@@ -16,31 +16,27 @@ def install_playwright_if_needed():
 
 def scrape_model_page(url, status_callback=None):
     """
-    Scrapes a page with real-time status updates.
-    status_callback: A function like st.write() to report progress.
+    Robust scraper that launches a fresh browser per request.
+    status_callback: Optional function to send updates to the UI.
     """
     if SAFE_MODE: return {"error": "Safe Mode enabled."}
     
     logs = []
-    
-    # Helper to report status
     def report(msg):
         logs.append(msg)
-        if status_callback:
-            status_callback(msg)
+        if status_callback: status_callback(msg)
         print(f"[Scraper] {msg}")
 
     IS_CLOUD = sys.platform != "win32"
     if IS_CLOUD: install_playwright_if_needed()
 
     try:
-        report("🚀 Launching Browser...")
+        report("🚀 Launching secure browser session...")
         
-        # CRITICAL FIX: No Caching. Launch fresh browser for every request to avoid Threading Error.
-        # CONTEXT MANAGER: Launches and Closes browser safely in the CURRENT thread.
+        # CRITICAL FIX: No Caching. Fresh browser prevents threading crashes.
         with sync_playwright() as p:
             browser = p.chromium.launch(
-                headless=True, # Always headless on server
+                headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"]
             )
             
@@ -53,61 +49,47 @@ def scrape_model_page(url, status_callback=None):
             report(f"🌐 Navigating to {url}...")
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                page.wait_for_timeout(2000) # Wait for JS to settle
+                page.wait_for_timeout(1000)
             except Exception as e:
                 report(f"⚠️ Navigation warning: {e}")
 
-            # --- SAFETY BRAKE (Max Clicks) ---
-            report("🖱️ Expanding content (Comments/Makes)...")
-            trigger_words = ["Load more", "Show more", "View all", "Comments"]
-            MAX_CLICKS = 3 
-            
-            # --- SAFETY BRAKE (Fixed Logic) ---
-            report("🖱️ Expanding content (Comments/Makes)...")
-            trigger_words = ["Load more", "Show more", "View all", "Comments"]
-            
-            # Simplified Logic: Try each trigger ONCE, wait briefly.
-            # If it fails, strictly move on. No infinite loops.
-            for trigger in trigger_words:
+            # --- SMART EXPANSION ---
+            report("🔍 Scanning for technical details...")
+            triggers = ["Load more", "Show more", "View all", "Comments"]
+            for t in triggers:
                 try:
-                    # Specific timeout for finding element
-                    btn = page.get_by_text(trigger, exact=False).first
+                    btn = page.get_by_text(t, exact=False).first
                     if btn.is_visible():
-                        report(f"   ↳ Clicking '{trigger}'...")
-                        btn.click(timeout=2000) # Strict click timeout
-                        page.wait_for_timeout(1000)
-                except Exception:
-                    # Ignore any click/find errors and continue
-                    continue
+                        btn.click(timeout=500)
+                        page.wait_for_timeout(200)
+                except: pass
 
-            report("📝 Extracting text and images...")
-            full_text = page.inner_text("body")
+            # --- EXTRACTION ---
+            text = page.inner_text("body")
             
-            # Smart Image Filter
-            images = page.eval_on_selector_all(
-                "img", 
-                """
+            # Intelligent Image Filter (Removes icons/avatars)
+            images = page.eval_on_selector_all("img", """
                 imgs => imgs.map(i => i.src).filter(src => 
                     src.startsWith('http') && 
                     !src.includes('avatar') && 
                     !src.includes('icon') &&
-                    !src.includes('logo')
+                    !src.includes('logo') &&
+                    i.naturalWidth > 200
                 )
-                """
-            )
+            """)
             
             browser.close()
-            report(f"✅ Done! Found {len(images)} images.")
             
-            # Clean Text
-            cleaned_text = "\n".join([l.strip() for l in full_text.splitlines() if len(l.strip()) > 20][:6000])
+            # Optimization: Trim text to save AI tokens/money
+            cleaned_text = "\n".join([l.strip() for l in text.splitlines() if len(l.strip()) > 30][:8000])
             
+            report("✅ Extraction complete.")
             return {
                 "text": cleaned_text,
-                "images": list(set(images))[:20],
+                "images": list(set(images))[:10],
                 "debug": logs
             }
 
     except Exception as e:
-        report(f"❌ Critical Error: {str(e)}")
+        report(f"❌ Scraper Error: {str(e)}")
         return {"error": str(e), "debug": logs}

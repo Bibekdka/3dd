@@ -5,7 +5,7 @@ from datetime import datetime
 import os
 from collections import Counter
 
-# CRITICAL FIX: Use persistent disk on Render, local file on PC
+# CRITICAL FIX: Use persistent disk on Cloud, local file on PC
 if os.path.exists("/data"):
     DB_FILE = "/data/printer_brain.db"
 else:
@@ -69,7 +69,7 @@ def get_learning_context():
         df = pd.read_sql_query(query, conn)
         conn.close()
         if df.empty: return "No recorded failures yet."
-        context = "USER'S PAST FAILURES (LEARN FROM THESE):\n"
+        context = "USER'S PAST FAILURES (WARNINGS):\n"
         for _, row in df.iterrows():
             context += f"- Model: {row['name']} | Issues: {row['ai_summary']} | Tags: {row['tags']}\n"
         return context
@@ -87,7 +87,7 @@ def get_db_stats():
         total = len(df)
         rate = round((success/total)*100, 1) if total > 0 else 0
         
-        all_tags = " ".join(df['tags'].dropna().astype(str)).replace("#", "").split()
+        all_tags = " ".join(df['tags'].dropna().astype(str)).replace("#", "").replace(",", " ").split()
         top_tags = Counter(all_tags).most_common(5)
         return {"total": total, "success_rate": rate, "top_tags": top_tags}
     except:

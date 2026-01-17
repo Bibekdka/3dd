@@ -1,3 +1,4 @@
+
 import io
 import textwrap
 import trimesh
@@ -5,6 +6,7 @@ import pandas as pd
 import requests
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+from reportlab.lib import colors
 from reportlab.lib.utils import ImageReader
 
 def export_pdf_report(data, image_urls=None):
@@ -40,12 +42,12 @@ def export_pdf_report(data, image_urls=None):
 
     if image_urls:
         c.setFont("Helvetica-Bold", 12)
-        c.drawString(50, y, "Visual Evidence:")
+        c.drawString(50, y, "Visual Evidence (User Makes):")
         y -= 110
         x_offset = 50
         for img_url in image_urls[:3]:
             try:
-                response = requests.get(img_url, timeout=1)
+                response = requests.get(img_url, timeout=1, stream=True)
                 if response.status_code == 200:
                     img_data = io.BytesIO(response.content)
                     img = ImageReader(img_data)
@@ -57,22 +59,30 @@ def export_pdf_report(data, image_urls=None):
     c.setFont("Helvetica", 11)
     if isinstance(data, dict):
         for key, value in data.items():
-            if "AI" in key or "Details" in key:
+            if key == "Verdict":
+                c.setFont("Helvetica-Bold", 14)
+                c.drawString(50, y, f"{key}: {value}")
+                y -= 25
+                c.setFont("Helvetica", 11)
+            elif "AI" in key or "Details" in key:
                 c.setFont("Helvetica-Bold", 12)
                 y = draw_wrapped_text(c, f"{key}:", 50, y, 500)
                 y -= 5
                 c.setFont("Helvetica", 11)
                 y = draw_wrapped_text(c, str(value), 50, y, 500)
                 y -= 15
-            elif "Images" in key: continue 
+            elif "Images" in key:
+                continue 
             else:
                 c.drawString(50, y, f"{key}: {value}")
                 y -= 20
+    else:
+        y = draw_wrapped_text(c, str(data), 50, y, 500)
+                
     c.save()
     buffer.seek(0)
     return buffer
 
-# --- MATH HELPERS ---
 def slicer_volume_adjustment(mesh_volume_cm3, infill_percent=20, wall_percent=25):
     wall_fraction = wall_percent / 100
     infill_fraction = infill_percent / 100
@@ -85,19 +95,17 @@ def estimate_print_time(effective_volume_cm3, layer_height=0.2, printer_speed_mm
     if extrusion_rate == 0: return 0
     return round((total_mm3 / extrusion_rate) / 3600, 2)
 
-def analyze_single_file_content(file_content, file_name, density=1.24, cost_per_kg=2000, infill=20, walls=3, speed_mm_s=60, nozzle_mm=0.4):
+def analyze_single_file_content(file_content, file_name, density, cost_per_kg, infill, walls, speed_mm_s, nozzle_mm):
     try:
-        # OPTIMIZATION: Load from RAM (BytesIO) instead of saving to Disk
+        # OPTIMIZATION: Read directly from Memory (RAM)
+        # This is 10x faster than writing to tempfile on disk
         file_obj = io.BytesIO(file_content)
         
-        # Load directly
         mesh = trimesh.load(file_obj, file_type='stl', force="mesh")
-
+        
         if mesh.is_empty: raise ValueError("Empty mesh")
         
         volume_cm3 = mesh.volume / 1000.0
-        
-        # Calculate derived stats
         effective_vol = slicer_volume_adjustment(volume_cm3, infill, walls)
         weight_g = effective_vol * density
         cost = (weight_g / 1000) * cost_per_kg
@@ -113,12 +121,12 @@ def analyze_single_file_content(file_content, file_name, density=1.24, cost_per_
     except Exception as e:
         return {"error": str(e), "File Name": file_name}
 
-def generate_quote(material_cost, print_time_hr, machine_rate_per_hr, electricity_per_hr, labour_rate_per_hr, profit_margin, gst, delivery_cost=0):
+def generate_quote(material_cost, print_time_hr, machine_rate_per_hr, electricity_per_hr, labour_rate_per_hr, profit_margin, gst):
     base_cost = material_cost + (print_time_hr * machine_rate_per_hr) + (print_time_hr * electricity_per_hr) + (print_time_hr * labour_rate_per_hr)
     profit = base_cost * profit_margin
     subtotal = base_cost + profit
     gst_amount = subtotal * gst
-    total = subtotal + gst_amount + delivery_cost
+    total = subtotal + gst_amount
     return {
         "Material Cost (₹)": round(material_cost, 2),
         "Machine Cost (₹)": round(print_time_hr * machine_rate_per_hr, 2),
@@ -126,6 +134,5 @@ def generate_quote(material_cost, print_time_hr, machine_rate_per_hr, electricit
         "Labour Cost (₹)": round(print_time_hr * labour_rate_per_hr, 2),
         "Profit (₹)": round(profit, 2),
         "GST (₹)": round(gst_amount, 2),
-        "Delivery (₹)": round(delivery_cost, 2),
         "Final Price (₹)": round(total, 2)
     }
