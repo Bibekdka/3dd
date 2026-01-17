@@ -57,6 +57,17 @@ def main():
         printer_name = st.selectbox("Printer", list(st.session_state["printers"].keys()))
         current_printer = st.session_state["printers"][printer_name]
 
+        st.divider()
+        st.caption("🔧 Print Settings")
+        mat_type = st.selectbox("Material", ["PLA", "PETG", "TPU", "ABS"])
+        infill = st.slider("Infill %", 10, 100, 20)
+        walls = st.slider("Wall Volume %", 5, 100, 20)
+        cost_kg = st.number_input("Cost/kg (₹)", 500, 5000, 1500)
+        
+        # Density Map
+        densities = {"PLA": 1.24, "PETG": 1.27, "ABS": 1.04, "TPU": 1.21}
+        density = densities[mat_type]
+
     # --- TABS: The Tools ---
     tab_scrape, tab_local, tab_learn = st.tabs(["🌐 Web Scout", "💻 Estimator", "📚 Bulk Learn"])
 
@@ -109,11 +120,21 @@ def main():
     # --- TAB 2: ESTIMATOR (Math + AI Check) ---
     with tab_local:
         st.header("💻 Cost & Safety Check")
+        # Config moved to Sidebar
         uploaded = st.file_uploader("Upload STL", type=["stl"], accept_multiple_files=True)
         if uploaded:
             for stl in uploaded:
                 stl.seek(0)
-                stats = analyze_single_file_content(stl.read(), stl.name, 1.24, 20, 20, 75, current_printer['speed'], 0.4)
+                stats = analyze_single_file_content(
+                    stl.read(),
+                    stl.name,
+                    density,
+                    cost_kg,
+                    infill,
+                    walls,
+                    current_printer['speed'],
+                    current_printer['nozzle']
+                )
                 
                 if "error" not in stats:
                     c1, c2 = st.columns([3, 1])
