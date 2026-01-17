@@ -47,44 +47,68 @@ def render_scraper():
         urls = [u.strip() for u in urls_input.split('\n') if "http" in u]
         for i, url in enumerate(urls):
             with st.expander(f"Analysis {i+1}: {url}", expanded=(i==0)):
-                data = scrape_model_page(url)
-                if "error" in data: st.error(data['error']); continue
-                
-                past_failures = get_learning_context()
-                prompt = f"Memory: {past_failures}\nNew Data: {data['text']}"
-                
-                # New Structured Call
-                ai_res = ai_analyze(prompt)
-                
-                # Verdict Banner
-                v = ai_res.get('verdict', 'UNKNOWN')
-                if v == "GO":
-                    st.success(f"✅ VERDICT: GO (Risk: {ai_res.get('risk_level', 'Low')})")
-                else:
-                    st.error(f"🛑 VERDICT: STOP (Risk: {ai_res.get('risk_level', 'High')})")
-                
-                c1, c2 = st.columns([2, 1])
-                with c1:
-                    st.subheader("📝 Summary")
-                    st.write(ai_res.get('summary', 'No summary'))
+                # --- LIVE PROGRESS LOADER ---
+                with st.status("🤖 AI Agent Working...", expanded=True) as status:
                     
-                    st.subheader("⚠️ Warnings")
-                    for w in ai_res.get('warnings', []): st.warning(w)
+                    # 1. Scraper Callback
+                    def update_status(msg):
+                        st.write(msg)
+                        time.sleep(0.05)
+                    
+                    data = scrape_model_page(url, status_callback=update_status)
+                    
+                    if "error" in data:
+                        status.update(label="❌ Failed", state="error")
+                        st.error(data['error'])
+                        continue
 
-                    st.subheader("🔧 Settings")
-                    for s in ai_res.get('settings', []): st.write(f"- {s}")
+                    # 2. AI Analysis
+                    st.write("🧠 Analyzing content...")
+                    past_failures = get_learning_context()
+                    prompt = f"Memory: {past_failures}\nNew Data: {data['text']}"
                     
-                    tags = " ".join(ai_res.get('tags', []))
-                    st.caption(f"Tags: {tags}")
+                    ai_res = ai_analyze(prompt)
                     
-                with c2:
-                    if data['images']: st.image(data['images'][:2], caption="Makes")
+                    # Store Results
+                    st.session_state[f'res_{i}'] = ai_res
+                    st.session_state[f'data_{i}'] = data
                     
-                    # Save
-                    if st.button("💾 Save", key=f"s_{i}"):
-                        details = f"Summary: {ai_res.get('summary')}\nWarnings: {ai_res.get('warnings')}\nSettings: {ai_res.get('settings')}"
-                        add_entry("Web Scrape", url, details, 0, ai_res.get('summary'), tags)
-                        st.success("Saved!")
+                    status.update(label="✅ Analysis Complete!", state="complete", expanded=False)
+
+                # Display Results (Outside Status)
+                if f'res_{i}' in st.session_state:
+                    ai_res = st.session_state[f'res_{i}']
+                    data = st.session_state[f'data_{i}']
+                    
+                    # Verdict Banner
+                    v = ai_res.get('verdict', 'UNKNOWN')
+                    if v == "GO":
+                        st.success(f"✅ VERDICT: GO (Risk: {ai_res.get('risk_level', 'Low')})")
+                    else:
+                        st.error(f"🛑 VERDICT: STOP (Risk: {ai_res.get('risk_level', 'High')})")
+                    
+                    c1, c2 = st.columns([2, 1])
+                    with c1:
+                        st.subheader("📝 Summary")
+                        st.write(ai_res.get('summary', 'No summary'))
+                        
+                        st.subheader("⚠️ Warnings")
+                        for w in ai_res.get('warnings', []): st.warning(w)
+
+                        st.subheader("🔧 Settings")
+                        for s in ai_res.get('settings', []): st.write(f"- {s}")
+                        
+                        tags = " ".join(ai_res.get('tags', []))
+                        st.caption(f"Tags: {tags}")
+                        
+                    with c2:
+                        if data['images']: st.image(data['images'][:2], caption="Makes")
+                        
+                        # Save
+                        if st.button("💾 Save", key=f"s_{i}"):
+                            details = f"Summary: {ai_res.get('summary')}\nWarnings: {ai_res.get('warnings')}\nSettings: {ai_res.get('settings')}"
+                            add_entry("Web Scrape", url, details, 0, ai_res.get('summary'), tags)
+                            st.success("Saved!")
 
 def render_calculator(current_printer):
     st.header("🚀 Smart Quote Calculator")

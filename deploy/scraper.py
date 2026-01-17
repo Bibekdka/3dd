@@ -1,20 +1,12 @@
+
 import time
+import os
 import sys
 import subprocess
-import os
-import random
-
 from playwright.sync_api import sync_playwright
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Check safe mode
 SAFE_MODE = os.getenv("STREAMLIT_SAFE_MODE", "false").lower() == "true"
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0"
-]
 
 def install_playwright_if_needed():
     if sys.platform != "win32":
@@ -22,84 +14,95 @@ def install_playwright_if_needed():
             subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
         except: pass
 
-@retry(
-    stop=stop_after_attempt(3), 
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type(Exception)
-)
-def fetch_page_html(url, browser):
+def scrape_model_page(url, status_callback=None):
     """
-    Isolated function just for fetching, so we can retry just this part.
+    Scrapes a page with real-time status updates.
+    status_callback: A function like st.write() to report progress.
     """
-    page = browser.new_page(
-        user_agent=random.choice(USER_AGENTS),
-        viewport={"width": 1920, "height": 1080}
-    )
-    page.goto(url, wait_until="domcontentloaded", timeout=30000)
-    return page
-
-def scrape_model_page(url):
     if SAFE_MODE: return {"error": "Safe Mode enabled."}
     
     logs = []
+    
+    # Helper to report status
+    def report(msg):
+        logs.append(msg)
+        if status_callback:
+            status_callback(msg)
+        print(f"[Scraper] {msg}")
+
     IS_CLOUD = sys.platform != "win32"
     if IS_CLOUD: install_playwright_if_needed()
 
     try:
+        report("🚀 Launching Browser...")
+        
+        # CRITICAL FIX: No Caching. Launch fresh browser for every request to avoid Threading Error.
         with sync_playwright() as p:
             browser = p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage"]
+                headless=True, # Always headless on server
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"]
             )
             
-            # RETRY WRAPPED FETCH
+            context = browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            page = context.new_page()
+
+            report(f"🌐 Navigating to {url}...")
             try:
-                page = fetch_page_html(url, browser)
+                page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                page.wait_for_timeout(2000) # Wait for JS to settle
             except Exception as e:
-                browser.close()
-                return {"error": f"Failed after 3 retries: {str(e)}", "debug": logs}
+                report(f"⚠️ Navigation warning: {e}")
 
-            logs.append(f"Navigated to {url}")
+            # --- SAFETY BRAKE (Max Clicks) ---
+            report("🖱️ Expanding content (Comments/Makes)...")
+            trigger_words = ["Load more", "Show more", "View all", "Comments"]
+            MAX_CLICKS = 3 
+            
+            for trigger in trigger_words:
+                clicks = 0
+                while clicks < MAX_CLICKS:
+                    try:
+                        btns = page.get_by_text(trigger, exact=False)
+                        if btns.count() > 0 and btns.first.is_visible():
+                            report(f"   ↳ Clicking '{trigger}' ({clicks+1}/{MAX_CLICKS})...")
+                            btns.first.click(timeout=1000)
+                            page.wait_for_timeout(1000)
+                            clicks += 1
+                        else:
+                            break
+                    except: break
 
-            # --- FAST SCROLL & LOAD ---
-            for _ in range(3):
-                page.mouse.wheel(0, 3000)
-                page.wait_for_timeout(500)
-
-            # Try expanding comments (Just once)
-            triggers = ["Load more", "Show more", "View all", "Comments", "Makes"]
-            for t in triggers:
-                try:
-                    btn = page.get_by_text(t, exact=False).first
-                    if btn.is_visible():
-                        btn.click(timeout=500)
-                except: pass
-
-            # --- EXTRACTION ---
-            text = page.inner_text("body")
+            report("📝 Extracting text and images...")
+            full_text = page.inner_text("body")
             
             # Smart Image Filter
-            images = page.eval_on_selector_all("img", """
+            images = page.eval_on_selector_all(
+                "img", 
+                """
                 imgs => imgs.map(i => i.src).filter(src => 
                     src.startsWith('http') && 
                     !src.includes('avatar') && 
                     !src.includes('icon') &&
                     !src.includes('logo')
                 )
-            """)
+                """
+            )
             
             browser.close()
+            report(f"✅ Done! Found {len(images)} images.")
             
-            cleaned_text = "\n".join([l.strip() for l in text.splitlines() if len(l.strip()) > 30][:4000])
+            # Clean Text
+            cleaned_text = "\n".join([l.strip() for l in full_text.splitlines() if len(l.strip()) > 20][:6000])
             
-            if len(cleaned_text) < 50:
-                return {"error": "Scraped content empty.", "debug": logs}
-
             return {
                 "text": cleaned_text,
-                "images": list(set(images))[:10],
+                "images": list(set(images))[:20],
                 "debug": logs
             }
 
     except Exception as e:
-        return {"error": f"Scraper Error: {str(e)}", "debug": logs}
+        report(f"❌ Critical Error: {str(e)}")
+        return {"error": str(e), "debug": logs}
