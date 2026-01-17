@@ -46,7 +46,8 @@ def clean_scraped_text(text):
         if (len(stripped) > 20 or is_priority) and not any(x in stripped.lower() for x in ["cookie", "privacy", "login", "sign up"]):
             useful.append(stripped)
             
-    return "\n".join(useful[:6000]) # Increased limit for deeper context
+    # USER REQUEST: "comments to be unlimited"
+    return "\n".join(useful)
 
 def install_playwright_if_needed():
     if sys.platform != "win32":
@@ -78,45 +79,85 @@ def scrape_model_page(url, debug=False):
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
             except: pass
             
-            # --- 2. PRIORITIZE USER-GENERATED CONTENT (UGC) ---
+            # --- 2. ROBUST NAVIGATION (The Fix) ---
             def activate_makes_tab():
-                # We prioritize tabs that contain "Makes" or "Uploads" to get real photos
-                targets = ["Makes", "I Made One", "Post a Make", "User Uploads", "Comments"]
+                logs.append("Hunting for User Photos (Makes/Comments)...")
                 
+                # 1. DEFINE TARGETS
+                # These are the text labels usually found on tabs
+                targets = [
+                    "Makes",           # Thingiverse / Printables
+                    "I Made One",      # Thingiverse
+                    "Post a Make",     # General
+                    "User Uploads",    # General
+                    "Comments",        # MakerWorld / General
+                    "Reviews",         # Thangs / General
+                    "Print Profiles"   # MakerWorld (Often contains photos)
+                ]
+                
+                tab_found = False
+                
+                # 2. CLICK THE TAB
                 for t in targets:
                     try:
+                        # "by_text" ignores random IDs. exact=False matches "Comments (24)"
                         elem = page.get_by_text(t, exact=False)
+                        
                         if elem.count() > 0 and elem.first.is_visible():
-                            logs.append(f"Clicking '{t}' to find real user photos...")
-                            elem.first.click(timeout=1500)
+                            logs.append(f"Found tab: '{t}'. Clicking...")
+                            elem.first.click(timeout=2000)
                             page.wait_for_timeout(2000) 
-                    except: pass
+                            tab_found = True
+                            
+                            if "Comments" in t:
+                                logs.append("In Comments section. Scanning for image attachments...")
+                            break 
+                    except: 
+                        pass
                 
-                # Deep scroll to load lazy images
-                for _ in range(6):
-                    page.mouse.wheel(0, 4000)
+                if not tab_found:
+                    logs.append("No specific 'Makes' tab found. relying on main page scroll.")
+
+                # 3. FORCE LOAD HIDDEN IMAGES
+                logs.append("scrolling deep to trigger lazy-loading...")
+                for _ in range(6): 
+                    page.mouse.wheel(0, 5000) 
                     page.wait_for_timeout(1000)
                 
-                # Expand "Load More" to get past the first 5 results
-                try:
-                    page.get_by_text("Load more", exact=False).first.click(timeout=1000)
-                    page.wait_for_timeout(1500)
-                except: pass
+                # 4. EXPAND "LOAD MORE" BUTTONS
+                trigger_words = ["Load more", "Show more", "View all", "See more"]
+                for trigger in trigger_words:
+                    try:
+                        btns = page.get_by_text(trigger, exact=False)
+                        if btns.count() > 0:
+                            logs.append(f"Clicking '{trigger}' to reveal more photos...")
+                            btns.first.click(timeout=1000)
+                            page.wait_for_timeout(2000)
+                    except: pass
 
             activate_makes_tab()
 
             full_text = page.inner_text("body")
             
-            # Smart Image Extraction: Filter out small icons/avatars
+            # --- 3. EXTRACT PHOTOS (Advanced Filter) ---
             images = page.eval_on_selector_all(
                 "img",
                 """
                 imgs => imgs.map(i => {
-                    return {src: i.src, width: i.naturalWidth, height: i.naturalHeight}
+                    return {
+                        src: i.src, 
+                        width: i.naturalWidth, 
+                        height: i.naturalHeight,
+                        alt: i.alt || ""
+                    }
                 }).filter(img => 
+                    // HEURISTICS TO FIND "REAL" PHOTOS:
                     img.src.startsWith('http') && 
-                    img.width > 300 && img.height > 300 && 
-                    !img.src.includes('avatar') && !img.src.includes('icon')
+                    img.width > 200 && img.height > 200 &&     // Ignore tiny icons
+                    !img.src.includes('avatar') &&             // Ignore user profile pics
+                    !img.src.includes('icon') &&               // Ignore UI icons
+                    !img.src.includes('logo') &&               // Ignore site logos
+                    (img.width > img.height || img.height > img.width) // Ignore perfect squares (often generic avatars)
                 ).map(i => i.src)
                 """
             )
@@ -126,9 +167,10 @@ def scrape_model_page(url, debug=False):
             browser.close()
             cleaned_text = clean_scraped_text(full_text)
             
+            # USER REQUEST: "imags to unlimited"
             return {
                 "text": cleaned_text,
-                "images": list(set(images))[:25], 
+                "images": list(set(images)), 
                 "stl_links": list(set(stl_links)),
                 "debug": logs
             }
