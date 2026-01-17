@@ -24,29 +24,20 @@ def detect_domain(url):
 def clean_scraped_text(text):
     if not text: return ""
     lines = text.splitlines()
-    
-    # 1. EXPANDED KEYWORD SEARCHING (The "Trigger Words")
     priority_words = [
-        # Filament Specifics
-        "pla+", "silk", "asa", "tpu", "95a", "matte", "gradient", "wood", "carbon fiber", "petg",
-        # Hardware Specifics
+        "filament", "pla", "silk", "asa", "tpu", "95a", "matte", "gradient", "wood", "carbon fiber", "petg",
         "0.6", "0.2", "nozzle", "pei", "sheet", "enclosure", "brim", "raft", "ams", "mmu", "multi-color",
-        # Failure Modes
         "spaghetti", "clog", "adhesion", "warped", "layer shift", "snapped", "brittle", "stringing",
-        # Vibe / Sentiment
         "easy", "hard", "nightmare", "perfect", "kid", "gift", "love", "waste", "failed", "success"
     ]
-    
     useful = []
     for l in lines:
         stripped = l.strip()
         is_priority = any(w in stripped.lower() for w in priority_words)
-        
-        # Keep if it's long enough OR if it contains a trigger word
-        if (len(stripped) > 20 or is_priority) and not any(x in stripped.lower() for x in ["cookie", "privacy", "login", "sign up"]):
+        # Relaxed filtering: Keep almost everything if meaningful
+        if len(stripped) > 20 or is_priority:
             useful.append(stripped)
             
-    # USER REQUEST: "comments to be unlimited"
     return "\n".join(useful)
 
 def install_playwright_if_needed():
@@ -62,7 +53,8 @@ def scrape_model_page(url, debug=False):
 
     logs = []
     IS_CLOUD = sys.platform != "win32"
-    USE_HEADLESS = True if IS_CLOUD else False 
+    USE_HEADLESS = True  
+
     if IS_CLOUD: install_playwright_if_needed()
 
     try:
@@ -71,7 +63,11 @@ def scrape_model_page(url, debug=False):
                 headless=USE_HEADLESS,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"]
             )
-            context = browser.new_context(viewport={"width": 1920, "height": 1080})
+            context = browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                # ESSENTIAL: User Agent to receive Desktop Version
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+            )
             page = context.new_page()
 
             logs.append(f"Navigating to {url}...")
@@ -79,67 +75,53 @@ def scrape_model_page(url, debug=False):
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
             except: pass
             
-            # --- 2. ROBUST NAVIGATION (The Fix) ---
-            def activate_makes_tab():
-                logs.append("Hunting for User Photos (Makes/Comments)...")
+            page.wait_for_timeout(3000) # Initial load wait
+
+            # --- ROBUST TAB HUNTING ---
+            def activate_content():
+                logs.append("Hunting for tabs (Makes/Comments)...")
                 
-                # 1. DEFINE TARGETS
-                # These are the text labels usually found on tabs
-                targets = [
-                    "Makes",           # Thingiverse / Printables
-                    "I Made One",      # Thingiverse
-                    "Post a Make",     # General
-                    "User Uploads",    # General
-                    "Comments",        # MakerWorld / General
-                    "Reviews",         # Thangs / General
-                    "Print Profiles"   # MakerWorld (Often contains photos)
-                ]
+                # Targets: Mix of exact case and likely variations
+                targets = ["Makes", "Comments", "Post a Make", "User Uploads", "Reviews", "Print Profiles"]
                 
-                tab_found = False
-                
-                # 2. CLICK THE TAB
                 for t in targets:
                     try:
-                        # "by_text" ignores random IDs. exact=False matches "Comments (24)"
+                        # Use first() with looser visibility constraints if needed
                         elem = page.get_by_text(t, exact=False)
+                        count = elem.count()
                         
-                        if elem.count() > 0 and elem.first.is_visible():
-                            logs.append(f"Found tab: '{t}'. Clicking...")
-                            elem.first.click(timeout=2000)
-                            page.wait_for_timeout(2000) 
-                            tab_found = True
-                            
-                            if "Comments" in t:
-                                logs.append("In Comments section. Scanning for image attachments...")
-                            break 
-                    except: 
-                        pass
+                        if count > 0:
+                            # Try clicking the first visible one
+                            for i in range(count):
+                                if elem.nth(i).is_visible():
+                                    logs.append(f"Found visual tab: '{t}'. Clicking...")
+                                    elem.nth(i).click(timeout=2000)
+                                    page.wait_for_timeout(2000)
+                                    break
+                    except: pass
                 
-                if not tab_found:
-                    logs.append("No specific 'Makes' tab found. relying on main page scroll.")
-
-                # 3. FORCE LOAD HIDDEN IMAGES
-                logs.append("scrolling deep to trigger lazy-loading...")
-                for _ in range(6): 
-                    page.mouse.wheel(0, 5000) 
+                # Deep Scroll for Lazy Loading (Essential for MakerWorld)
+                logs.append("Scrolling deep for lazy content...")
+                for _ in range(8): 
+                    page.mouse.wheel(0, 4000) 
                     page.wait_for_timeout(1000)
                 
-                # 4. EXPAND "LOAD MORE" BUTTONS
-                trigger_words = ["Load more", "Show more", "View all", "See more"]
-                for trigger in trigger_words:
+                # "Load More" Expansion
+                triggers = ["Load more", "Show more", "View all"]
+                for trigger in triggers:
                     try:
                         btns = page.get_by_text(trigger, exact=False)
                         if btns.count() > 0:
-                            logs.append(f"Clicking '{trigger}' to reveal more photos...")
+                            logs.append(f"Clicking '{trigger}'...")
                             btns.first.click(timeout=1000)
-                            page.wait_for_timeout(2000)
+                            page.wait_for_timeout(1500)
                     except: pass
 
-            activate_makes_tab()
+            activate_content()
 
             full_text = page.inner_text("body")
             
-            # --- 3. EXTRACT PHOTOS (Advanced Filter) ---
+            # --- IMAGE EXTRACTION (Unlimited + Smart Filter) ---
             images = page.eval_on_selector_all(
                 "img",
                 """
@@ -147,17 +129,15 @@ def scrape_model_page(url, debug=False):
                     return {
                         src: i.src, 
                         width: i.naturalWidth, 
-                        height: i.naturalHeight,
-                        alt: i.alt || ""
+                        height: i.naturalHeight
                     }
                 }).filter(img => 
-                    // HEURISTICS TO FIND "REAL" PHOTOS:
                     img.src.startsWith('http') && 
-                    img.width > 200 && img.height > 200 &&     // Ignore tiny icons
-                    !img.src.includes('avatar') &&             // Ignore user profile pics
-                    !img.src.includes('icon') &&               // Ignore UI icons
-                    !img.src.includes('logo') &&               // Ignore site logos
-                    (img.width > img.height || img.height > img.width) // Ignore perfect squares (often generic avatars)
+                    img.width > 200 && img.height > 200 &&     
+                    !img.src.includes('avatar') &&             
+                    !img.src.includes('icon') &&               
+                    !img.src.includes('logo') &&
+                    (img.width + 50 > img.height && img.height + 50 > img.width ? false : true) // Filter out pure squares (avatars)
                 ).map(i => i.src)
                 """
             )
@@ -167,7 +147,6 @@ def scrape_model_page(url, debug=False):
             browser.close()
             cleaned_text = clean_scraped_text(full_text)
             
-            # USER REQUEST: "imags to unlimited"
             return {
                 "text": cleaned_text,
                 "images": list(set(images)), 
