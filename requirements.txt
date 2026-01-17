@@ -11,3 +11,5 @@ google-generativeai
 python-dotenv
 reportlab
 playwright
+gspread
+oauth2client
