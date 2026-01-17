@@ -159,33 +159,57 @@ def main():
             advice = ai_analyze(prompt)
             st.markdown(advice['details'])
 
-    # --- 3. COST CALCULATOR (Restored) ---
+    # --- 3. COST CALCULATOR (Restored & Enhanced) ---
     with tab_calc:
         st.subheader("💰 Smart Quote Calculator")
         
+        # Primary Inputs
         c1, c2, c3 = st.columns(3)
-        mat_cost = c1.number_input("Material Cost (₹/kg)", value=1200)
-        speed = c2.number_input("Speed (mm/s)", value=60)
+        mat_cost = c1.number_input("Material (₹/kg)", value=1200, step=50)
+        speed = c2.number_input("Speed (mm/s)", value=60, step=10)
         profit = c3.slider("Profit Margin %", 0, 200, 50)
         
+        # Advanced/Dynamic Rates
+        with st.expander("⚙️ Operational Rates (Electricity, Labor, Tax)", expanded=False):
+            rc1, rc2, rc3 = st.columns(3)
+            elec_rate = rc1.number_input("Electricity (₹/hr)", value=12.0)
+            labor_rate = rc2.number_input("Labor (₹/hr)", value=50.0)
+            mach_rate = rc3.number_input("Machine Wear (₹/hr)", value=30.0)
+            
+            rc4, rc5 = st.columns(2)
+            gst_rate = rc4.number_input("GST %", value=18.0) / 100
+            delivery = rc5.number_input("Delivery/Packaging (₹)", value=0.0)
+
         uploaded_calc = st.file_uploader("Upload STL for Quote", type=['stl'])
         
         if uploaded_calc:
             # Analyze
             bytes_data = uploaded_calc.getvalue()
-            # Defaults for calcs
+            # Defaults for calcs (Infill=20, Walls=3)
             stats = analyze_single_file_content(bytes_data, uploaded_calc.name, 1.24, mat_cost, 20, 3, speed, 0.4)
             
             if "error" not in stats:
                 # Generate Quote
-                q = generate_quote(stats['Cost (₹)'], stats['Print Time (hr)'], 50, 10, 50, profit/100, 0.18)
+                q = generate_quote(
+                    stats['Cost (₹)'], 
+                    stats['Print Time (hr)'], 
+                    mach_rate, 
+                    elec_rate, 
+                    labor_rate, 
+                    profit/100, 
+                    gst_rate,
+                    delivery
+                )
                 
                 # Display
                 colA, colB = st.columns(2)
                 with colA:
                     st.metric("Final Price", f"₹{q['Final Price (₹)']}")
+                    st.write("---")
+                    st.caption("Analysis:")
                     st.write(stats)
                 with colB:
+                    st.caption("Breakdown:")
                     st.json(q)
                 
                 # PDF

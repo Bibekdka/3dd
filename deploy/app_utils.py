@@ -124,12 +124,12 @@ def analyze_single_file_content(file_content, file_name, density, cost_per_kg, i
     except Exception as e:
         return {"error": str(e), "File Name": file_name}
 
-def generate_quote(material_cost, print_time_hr, machine_rate_per_hr, electricity_per_hr, labour_rate_per_hr, profit_margin, gst):
+def generate_quote(material_cost, print_time_hr, machine_rate_per_hr, electricity_per_hr, labour_rate_per_hr, profit_margin, gst, delivery_cost=0):
     base_cost = material_cost + (print_time_hr * machine_rate_per_hr) + (print_time_hr * electricity_per_hr) + (print_time_hr * labour_rate_per_hr)
     profit = base_cost * profit_margin
     subtotal = base_cost + profit
     gst_amount = subtotal * gst
-    total = subtotal + gst_amount
+    total = subtotal + gst_amount + delivery_cost
     return {
         "Material Cost (₹)": round(material_cost, 2),
         "Machine Cost (₹)": round(print_time_hr * machine_rate_per_hr, 2),
@@ -137,5 +137,6 @@ def generate_quote(material_cost, print_time_hr, machine_rate_per_hr, electricit
         "Labour Cost (₹)": round(print_time_hr * labour_rate_per_hr, 2),
         "Profit (₹)": round(profit, 2),
         "GST (₹)": round(gst_amount, 2),
+        "Delivery (₹)": round(delivery_cost, 2),
         "Final Price (₹)": round(total, 2)
     }
