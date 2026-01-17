@@ -20,6 +20,15 @@ from reportlab.pdfgen import canvas
 from scraper import scrape_model_page, clean_scraped_text
 from ai import ai_analyze
 from history import load_history, add_history_entry, update_print_status
+import requests
+
+def download_file(url):
+    try:
+        response = requests.get(url, stream=True, timeout=30)
+        response.raise_for_status()
+        return io.BytesIO(response.content)
+    except Exception as e:
+        return None
 
 # Load environment variables
 load_dotenv()
@@ -398,29 +407,6 @@ def main():
                 mime="application/pdf"
             )
 
-    # --- LINK PARSER SECTION ---
-import requests # ADDED: For downloading STLs and Images
-
-# ... (keep existing imports) ...
-
-# --- IMPROVEMENT: Caching this function improves performance ---
-@st.cache_data(show_spinner=False)
-def analyze_single_file_content(file_content, file_name, density, cost_per_kg, infill, walls, speed_mm_s, nozzle_mm):
-    # ... (existing logic) ...
-    # (Ensure this function handles 'file_content' as bytes correctly, which it does)
-    pass # Placeholder to indicate no change to internal logic here
-
-def download_file(url):
-    try:
-        response = requests.get(url, stream=True, timeout=30)
-        response.raise_for_status()
-        return io.BytesIO(response.content)
-    except Exception as e:
-        return None
-
-def main():
-    # ... (existing setup) ...
-   
     # --- LINK PARSER SECTION ---
     st.divider()
     st.header("🔗 Link Parser")
