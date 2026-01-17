@@ -67,8 +67,20 @@ def main():
                 st.info(advice.get('details', advice.get('summary', 'No advice generated.')))
 
         st.divider()
+        st.divider()
         # Printer Config
         printer_name = st.selectbox("Printer", list(st.session_state["printers"].keys()))
+        
+        # --- COST SETTINGS (Restored) ---
+        with st.expander("💰 Cost Settings", expanded=True):
+            cost_kg = st.number_input("Material Cost (₹/kg)", value=2000.0)
+            machine_rate = st.number_input("Machine Rate (₹/hr)", value=50.0)
+            elec_rate = st.number_input("Electricity Rate (₹/hr)", value=15.0)
+            labor_rate = st.number_input("Labor Rate (₹/hr)", value=100.0)
+            delivery_cost = st.number_input("Delivery Cost (₹)", value=100.0)
+            margin = st.slider("Profit Margin (%)", 0, 200, 50)
+            gst_rate = 0.18 # Fixed 18% GST default
+
         debug_mode = st.checkbox("Debug Mode")
 
     # --- CORE TABS (Preserved) ---
@@ -138,15 +150,48 @@ def main():
         st.header("💻 Local File Estimator")
         uploaded = st.file_uploader("Upload STL", type=["stl"], accept_multiple_files=True)
         if uploaded:
+            st.write("---")
             for stl in uploaded:
                 stl.seek(0); bytes_data = stl.read()
-                stats = analyze_single_file_content(bytes_data, stl.name, 1.24, 2000, 20, 3, 60, 0.4)
+                
+                # 1. Analyze Geometry & Basic Material Cost
+                stats = analyze_single_file_content(
+                    bytes_data, stl.name, 
+                    density=1.24, 
+                    cost_per_kg=cost_kg, 
+                    infill=20, walls=3, 
+                    speed_mm_s=60, nozzle_mm=0.4
+                )
+                
                 if "error" not in stats:
-                    st.write(f"**{stl.name}** | Cost: ₹{stats['Cost (₹)']}")
+                    # 2. Calculate Full Quote (Machine, Labor, etc.)
+                    quote = generate_quote(
+                        material_cost=stats['Cost (₹)'],
+                        print_time_hr=stats['Print Time (hr)'],
+                        machine_rate_per_hr=machine_rate,
+                        electricity_per_hr=elec_rate,
+                        labour_rate_per_hr=labor_rate,
+                        profit_margin=margin/100,
+                        gst=gst_rate,
+                        delivery_cost=delivery_cost
+                    )
+                    
+                    c1, c2 = st.columns([1, 2])
+                    with c1:
+                        st.subheader(f"📄 {stl.name}")
+                        st.metric("Final Price", f"₹{quote['Final Price (₹)']}")
+                        st.caption(f"Time: {stats['Print Time (hr)']} hrs | Weight: {stats['Weight (g)']}g")
+                    
+                    with c2:
+                        st.json(quote, expanded=False)
+                        
                     if st.button("🧠 AI Check", key=f"ai_{stl.name}"):
                         mem = get_learning_context()
                         res = ai_analyze(f"Check safety for {stl.name} ({stats['Effective Volume (cm3)']}cm3). History: {mem}")
                         st.info(res.get('details', res.get('summary')))
+                else:
+                    st.error(f"Error analyzing {stl.name}: {stats['error']}")
+                st.divider()
                 st.divider()
 
     # --- TAB 3: BULK LEARNING ---
