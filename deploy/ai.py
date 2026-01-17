@@ -1,6 +1,11 @@
+
 import os
+import io
+import requests
 import typing_extensions as typing
+from PIL import Image
 from pydantic import BaseModel, Field
+
 try:
     import google.generativeai as genai
     GEMINI_AVAILABLE = True
@@ -24,12 +29,15 @@ class PrintAnalysis(BaseModel):
     tags: list[str] = Field(description="5 technical hashtags starting with #")
 
 def ai_analyze(text: str) -> dict:
-    """Legacy wrapper for simple analysis if needed"""
-    return ai_analyze_structured(text)
+    """Legacy wrapper for simple text analysis"""
+    return ai_analyze_multimodal(text, [])
 
-def ai_analyze_structured(text: str, memory_context: str = "") -> dict:
+def ai_generate_tags(text_summary: str) -> str:
+    return "#3dprinting"
+
+def ai_analyze_multimodal(text: str, image_urls: list[str] = [], memory_context: str = "") -> dict:
     """
-    Robust function that forces AI to return JSON, not chatty text.
+    Robust function that accepts Text + Images and returns structured JSON.
     """
     if not GEMINI_AVAILABLE or not API_KEY:
         return {
@@ -42,32 +50,64 @@ def ai_analyze_structured(text: str, memory_context: str = "") -> dict:
         }
 
     # List of models to try in order of preference
-    models_to_try = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro"]
+    # We prioritize Flash for Multimodal speed/cost
+    models_to_try = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro"]
+
+    # --- 1. DOWNLOAD IMAGES ---
+    images_to_send = []
+    if image_urls:
+        for url in image_urls[:3]: # Max 3 images
+            try:
+                resp = requests.get(url, timeout=3)
+                if resp.status_code == 200:
+                    img = Image.open(io.BytesIO(resp.content))
+                    images_to_send.append(img)
+            except Exception:
+                continue
 
     for model_name in models_to_try:
         try:
             model = genai.GenerativeModel(model_name)
             
-            # 2. ASK FOR JSON SCHEMA
-            prompt = f"""
-            Analyze this 3D print model based on the text below.
-            MEMORY CONTEXT: {memory_context}
-            MODEL TEXT: {text[:15000]}
+            # --- 2. CONSRUCT PROMPT ---
+            # We mix text and images in a list
+            prompt_parts = [
+                f"""
+                You are a sophisticated 3D Printing Expert AI.
+                Analyze the provided 3D model images and description.
+                
+                USER MEMORY (Failures): {memory_context}
+                MODEL DESCRIPTION: {text[:15000]}
+                
+                Look for:
+                1. Thin walls or fragile features (Visual check).
+                2. Overhangs needing support (Visual check).
+                3. Text description warnings.
+                
+                Return strictly JSON.
+                """
+            ]
+            # Add images to prompt
+            prompt_parts.extend(images_to_send)
             
-            Return the result strictly as JSON matching the schema.
-            """
-            
+            # --- 3. GENERATE ---
             response = model.generate_content(
-                prompt,
+                prompt_parts,
                 generation_config=genai.GenerationConfig(
                     response_mime_type="application/json", 
                     response_schema=PrintAnalysis
                 )
             )
             
-            # 3. VALIDATE DATA
+            # --- 4. VALIDATE ---
             result = PrintAnalysis.model_validate_json(response.text)
-            return result.model_dump()
+            res_dict = result.model_dump()
+            
+            # Append a flag so user knows images were used
+            if images_to_send:
+                res_dict['summary'] += " (👁️ Visually Analyzed)"
+                
+            return res_dict
             
         except Exception as e:
             continue # Try next model
@@ -80,7 +120,3 @@ def ai_analyze_structured(text: str, memory_context: str = "") -> dict:
         "settings": [], 
         "tags": []
     }
-
-def ai_generate_tags(text_summary: str) -> str:
-    # Just a placeholder now as tags are in the struct
-    return "#3dprinting"

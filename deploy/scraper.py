@@ -61,19 +61,23 @@ def scrape_model_page(url, status_callback=None):
             trigger_words = ["Load more", "Show more", "View all", "Comments"]
             MAX_CLICKS = 3 
             
+            # --- SAFETY BRAKE (Fixed Logic) ---
+            report("🖱️ Expanding content (Comments/Makes)...")
+            trigger_words = ["Load more", "Show more", "View all", "Comments"]
+            
+            # Simplified Logic: Try each trigger ONCE, wait briefly.
+            # If it fails, strictly move on. No infinite loops.
             for trigger in trigger_words:
-                clicks = 0
-                while clicks < MAX_CLICKS:
-                    try:
-                        btns = page.get_by_text(trigger, exact=False)
-                        if btns.count() > 0 and btns.first.is_visible():
-                            report(f"   ↳ Clicking '{trigger}' ({clicks+1}/{MAX_CLICKS})...")
-                            btns.first.click(timeout=1000)
-                            page.wait_for_timeout(1000)
-                            clicks += 1
-                        else:
-                            break
-                    except: break
+                try:
+                    # Specific timeout for finding element
+                    btn = page.get_by_text(trigger, exact=False).first
+                    if btn.is_visible():
+                        report(f"   ↳ Clicking '{trigger}'...")
+                        btn.click(timeout=2000) # Strict click timeout
+                        page.wait_for_timeout(1000)
+                except Exception:
+                    # Ignore any click/find errors and continue
+                    continue
 
             report("📝 Extracting text and images...")
             full_text = page.inner_text("body")

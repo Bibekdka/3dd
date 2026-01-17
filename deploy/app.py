@@ -67,7 +67,15 @@ def render_scraper():
                     past_failures = get_learning_context()
                     prompt = f"Memory: {past_failures}\nNew Data: {data['text']}"
                     
-                    ai_res = ai_analyze(prompt)
+                    # 3. Multimodal Analysis
+                    # Extract images for the AI to see
+                    image_urls = data.get('images', [])
+                    st.write(f"👁️ analyzing {len(image_urls)} images + text...")
+                    
+                    # Call new function (defined in ai.py, but we import it as ai_analyze alias or change import)
+                    # NOTE: We need to update import to use `ai_analyze_multimodal`
+                    from ai import ai_analyze_multimodal
+                    ai_res = ai_analyze_multimodal(prompt, image_urls)
                     
                     # Store Results
                     st.session_state[f'res_{i}'] = ai_res
