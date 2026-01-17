@@ -1,6 +1,4 @@
-# ai.py
 import os
-
 try:
     import google.generativeai as genai
     GEMINI_AVAILABLE = True
@@ -12,46 +10,30 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_AVAILABLE and API_KEY:
     try:
         genai.configure(api_key=API_KEY)
-    except Exception:
-        pass
-
+    except Exception: pass
 
 def ai_analyze(text: str) -> dict:
-    """
-    SAFE AI wrapper.
-    NEVER crashes.
-    NEVER changes shape unexpectedly.
-    """
-
-    fallback = {
-        "summary": "General community-based recommendations.",
-        "details": (
-            "- Layer height: 0.2 mm\n"
-            "- Infill: 15–20%\n"
-            "- Nozzle temp: 200–210 °C\n"
-            "- Bed temp: 55–60 °C\n"
-            "- Supports: Only if needed\n"
-            "- Orientation: Flat on bed\n"
-        )
-    }
-
-    if not text or len(text.strip()) < 50:
-        return fallback
-
-    if not GEMINI_AVAILABLE or not API_KEY:
-        return fallback
+    fallback = {"summary": "Analysis unavailable", "details": "Check API Key"}
+    
+    if not GEMINI_AVAILABLE or not API_KEY: return fallback
 
     try:
-        model = genai.GenerativeModel("gemini-1.0-pro")
+        model = genai.GenerativeModel("gemini-1.5-flash") # Flash is faster/cheaper
         response = model.generate_content(text)
+        if not response or not response.text: return fallback
+        return {"summary": "AI Analysis", "details": response.text.strip()}
+    except: return fallback
 
-        if not response or not response.text:
-            return fallback
-
-        return {
-            "summary": "Extracted from user comments and descriptions.",
-            "details": response.text.strip()
-        }
-
-    except Exception:
-        return fallback
+def ai_generate_tags(text_summary: str) -> str:
+    """
+    New: Generates hashtags for the database (Auto-Tagging).
+    """
+    if not GEMINI_AVAILABLE or not API_KEY: return "#manual #check"
+    
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        prompt = f"Generate 5 short technical hashtags for this 3D print description. Output ONLY the tags (e.g., #petg #articulated #vase-mode). Text: {text_summary[:500]}"
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except:
+        return "#3dprint #model"
