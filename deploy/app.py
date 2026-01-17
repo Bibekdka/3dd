@@ -58,7 +58,11 @@ def main():
             with st.spinner("Analyzing history..."):
                 ctx = get_learning_context()
                 advice = ai_analyze(f"Based on failures: {ctx}, give 3 tips.")
-                st.info(advice['details'])
+                # Structured Output Handling
+                if advice.get('verdict') == "ERROR":
+                     st.error(advice.get('summary'))
+                else:
+                     st.info(f"**Advice**: {advice.get('summary')}\n\n**Actionable Tips**: {advice.get('settings')}")
 
     # TABS
     tab_web, tab_calc, tab_local, tab_bulk, tab_db = st.tabs(["🌐 AI Scraper", "🚀 Calculator", "🛡️ Geometry Check", "📚 Bulk Internalize", "🗄️ History"])
